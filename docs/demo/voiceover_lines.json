@@ -1,0 +1,104 @@
+{
+  "voice": "Avinash",
+  "model": "timbre-v3.0",
+  "language": "en-IN",
+  "sample_rate": 24000,
+  "speed": 0.95,
+  "lines": [
+    {
+      "id": "01_hidden",
+      "start": 3.0,
+      "text": "An AI agent just passed a hidden instruction to one of its tools. It didn't run."
+    },
+    {
+      "id": "02_what",
+      "start": 8.4,
+      "text": "OmniGuard is a security gateway for the Model Context Protocol."
+    },
+    {
+      "id": "03_stages",
+      "start": 12.4,
+      "text": "Every tool call passes seven stages, from identity and tool integrity to policy, inspection and audit."
+    },
+    {
+      "id": "04_decode",
+      "start": 21.5,
+      "text": "Encoded payloads are decoded before anything inspects them. The rule that fired is named, and explained."
+    },
+    {
+      "id": "05_twostep",
+      "start": 28.4,
+      "text": "Now a two-step attack. The agent reads a secrets file."
+    },
+    {
+      "id": "06_masked",
+      "start": 32.3,
+      "text": "The keys come back masked, and the session is marked sensitive."
+    },
+    {
+      "id": "07_remember",
+      "start": 36.0,
+      "text": "Then it tries to send a summary out. The gateway remembers what this session has seen."
+    },
+    {
+      "id": "08_prove",
+      "start": 43.2,
+      "text": "Blocking is half the job. Later, you also have to prove what the gateway decided."
+    },
+    {
+      "id": "09_ledgers",
+      "start": 48.6,
+      "text": "Every decision goes to three ledgers. In the third, Merkle roots are written to a contract on-chain."
+    },
+    {
+      "id": "10_attacker",
+      "start": 55.2,
+      "text": "Play the attacker with root access. Flip a denied record to allowed, then recompute the whole chain."
+    },
+    {
+      "id": "11_disagree",
+      "start": 61.3,
+      "text": "The table looks clean. The hash chain looks clean. Only the anchored ledger disagrees."
+    },
+    {
+      "id": "12_onchain",
+      "start": 67.1,
+      "text": "Because the root on-chain cannot be rewritten."
+    },
+    {
+      "id": "13_heldout",
+      "start": 72.4,
+      "text": "Detection is measured on held-out data. Rules and thresholds were frozen before the test."
+    },
+    {
+      "id": "14_f1",
+      "start": 78.2,
+      "text": "On prompt injection, F1 goes from zero point three zero with rules alone to zero point eight four with a pinned classifier."
+    },
+    {
+      "id": "15_pinned",
+      "start": 86.8,
+      "text": "The model's weights are hash-pinned, and checked before every load."
+    },
+    {
+      "id": "16_tamper",
+      "start": 91.0,
+      "text": "Forty of forty tamper trials, caught."
+    },
+    {
+      "id": "17_latency",
+      "start": 94.0,
+      "text": "Structured calls average under a millisecond, and never touch the model."
+    },
+    {
+      "id": "18_honest",
+      "start": 98.0,
+      "text": "It does not catch everything. About a quarter of paraphrased injections still get through, and the report lists them."
+    },
+    {
+      "id": "19_close",
+      "start": 104.7,
+      "text": "OmniGuard-MCP. Every tool call, inspected. Every decision, provable."
+    }
+  ]
+}

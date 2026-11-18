@@ -21,3 +21,6 @@ models/
 *.onnx_data
 *.safetensors
 *.pt
+
+# local demo renders (voiceover, screen captures)
+demo_media/

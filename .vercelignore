@@ -1,0 +1,4 @@
+# Vercel serves only the static dashboard in frontend/; keep the Python backend, models and results out of the upload.
+/*
+!/frontend
+!/vercel.json

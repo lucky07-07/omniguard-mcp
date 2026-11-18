@@ -1,0 +1,86 @@
+# OmniGuard-MCP Attribute-Based Access Control policy-as-code.
+# Deny by default: a (role, tool) pair that is not listed is refused, and every
+# listed parameter constraint must hold on the *canonicalized* arguments.
+#
+# Identities authenticate with a bearer token; only its SHA-256 is stored here.
+# The four identities below are LOCAL DEVELOPMENT test identities whose tokens
+# are "dev-token-<role>" (e.g. dev-token-analyst). Replace them before any
+# real deployment.
+
+version: 1
+default_decision: deny
+
+identities:
+  agent-readonly:
+    role: read_only
+    token_sha256: 6d94617834d6da4daedf29e465fb240f604a17d331970b31829e6861f7b395f9
+  agent-analyst:
+    role: analyst
+    token_sha256: a5d3659b68fbff8e306c9126b29056f5c25ecbf7cb5735801a70b27d23138d21
+  agent-operator:
+    role: operator
+    token_sha256: 6a230cc8a97a169000f0cb6b585deef23a834d6d8b29285284afb88bf0811d66
+  agent-admin:
+    role: admin
+    token_sha256: f37837a0953cdad0b2908f982c310813daec9cf4f1950c7b82a22e8d277b0aad
+
+roles:
+  read_only:
+    allow:
+      read_file:
+        path: {glob: ["/workspace/public/**", "/workspace/reports/**"]}
+      list_dir:
+        path: {glob: ["/workspace", "/workspace/**"]}
+
+  analyst:
+    allow:
+      read_file:
+        path: {glob: ["/workspace/public/**", "/workspace/reports/**"]}
+      list_dir:
+        path: {glob: ["/workspace", "/workspace/**"]}
+      query_db:
+        query:
+          sql_statement_types: [SELECT]
+          max_limit: 100            # LIMIT must be present and <= 100
+          table_prefixes: ["analytics_", "public_"]
+      web_fetch:
+        url: {schemes: [https]}
+
+  operator:
+    allow:
+      read_file:
+        path: {glob: ["/workspace/**"]}
+      write_file:
+        path: {glob: ["/workspace/**"]}
+        content: {max_length: 100000}
+      list_dir:
+        path: {glob: ["/workspace", "/workspace/**"]}
+      query_db:
+        query:
+          sql_statement_types: [SELECT]
+          max_limit: 1000
+      read_customer_records:
+        customer_id: {regex: '^C[0-9]{3,8}$'}
+      web_fetch:
+        url: {schemes: [http, https]}
+      run_command:
+        command:
+          allowed_binaries: [ls, cat, grep, echo, head, tail, wc, pwd, find, sort, uniq, date, whoami, du, df]
+      http_post:
+        url: {domains: ["api.example.com", "hooks.example.com"]}
+      send_email:
+        to: {regex: '^[^@\s]+@example\.com$'}
+      webhook_emit:
+        url: {domains: ["hooks.example.com"]}
+
+  admin:
+    allow: "*"   # every tool, no parameter constraints (the security engine still applies)
+
+# Information-flow restrictions keyed on the session taint state.
+taint_policies:
+  TAINTED_SENSITIVE:
+    deny_tool_classes: [outbound_egress]
+    exempt_roles: []
+  TAINTED_UNTRUSTED:
+    deny_tools: [run_command]          # untrusted content in context must not reach a shell
+    exempt_roles: [admin]

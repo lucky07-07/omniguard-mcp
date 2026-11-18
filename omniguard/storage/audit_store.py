@@ -26,7 +26,8 @@ from omniguard.models import AuditEvent, Regime
 
 EVENT_COLUMNS = (
     "ts", "event_type", "session_id", "agent_id", "role", "tool_name", "args_hash",
-    "taint_state", "decision", "risk_score", "rule_ids", "latency_ms", "details",
+    "taint_state", "decision", "risk_score", "rule_ids", "latency_ms",
+    "inspection_path", "ml_score_milli", "ml_provider", "model_sha16", "details",
 )
 
 _EVENT_COLS_SQL = """
@@ -34,7 +35,8 @@ _EVENT_COLS_SQL = """
     event_type TEXT NOT NULL,
     session_id TEXT, agent_id TEXT, role TEXT, tool_name TEXT, args_hash TEXT,
     taint_state TEXT, decision TEXT, risk_score REAL, rule_ids TEXT,
-    latency_ms REAL, details TEXT
+    latency_ms REAL, inspection_path TEXT, ml_score_milli INTEGER, ml_provider TEXT, model_sha16 TEXT,
+    details TEXT
 """
 
 SCHEMAS = {
@@ -97,6 +99,10 @@ def row_to_payload(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
         risk_score=row["risk_score"] or 0.0,
         rule_ids=json.loads(row["rule_ids"] or "[]"),
         latency_ms=row["latency_ms"] or 0.0,
+        inspection_path=row["inspection_path"] or "",
+        ml_score_milli=row["ml_score_milli"],
+        ml_provider=row["ml_provider"],
+        model_sha16=row["model_sha16"],
         details=json.loads(row["details"] or "{}"),
     ).payload()
 
@@ -152,7 +158,8 @@ class AuditStore:
         values = (
             p["ts"], p["event_type"], p["session_id"], p["agent_id"], p["role"], p["tool_name"],
             p["args_hash"], p["taint_state"], p["decision"], p["risk_score"],
-            json.dumps(p["rule_ids"]), p["latency_ms"], canonical_json(p["details"]),
+            json.dumps(p["rule_ids"]), p["latency_ms"], p["inspection_path"], p["ml_score_milli"],
+            p["ml_provider"], p["model_sha16"], canonical_json(p["details"]),
         )
         cols = ",".join(EVENT_COLUMNS)
         if self.regime == Regime.R1:

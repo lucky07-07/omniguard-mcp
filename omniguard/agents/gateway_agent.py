@@ -104,11 +104,11 @@ class GatewayAgent:
     def __init__(self, downstream: Downstream, audit: AuditAnchorAgent,
                  engine: SecurityEngine | None = None, abac: AbacEngine | None = None,
                  integrity: ToolIntegrityRegistry | None = None, taint: SessionTaintTracker | None = None,
-                 verify_on_call: bool = True):
+                 verify_on_call: bool = True, ml: Any | None = None):
         self.downstream = downstream
         self.audit = audit
         self.integrity = integrity or ToolIntegrityRegistry.load()
-        self.engine = engine or SecurityEngine(tool_meta=self.integrity.tools)
+        self.engine = engine or SecurityEngine(tool_meta=self.integrity.tools, ml=ml)
         self.abac = abac or AbacEngine(path_jail=self.engine.jail)
         self.taint = taint or SessionTaintTracker()
         self.verify_on_call = verify_on_call
@@ -265,7 +265,12 @@ class GatewayAgent:
             "decision": decision.value, "stage": stage or "complete", "risk_score": risk, "triggered_rules": rules,
             "taint_state": self.taint.state_str(caller.session_id), "canonical_input_hash": args_hash,
         }
+        ml_v = [v for v in (ingress, egress) if v is not None and v.inspection_path == "hybrid_ml"]
+        trace["inspection_path"] = "hybrid_ml" if ml_v else "deterministic"
+        trace["ml_score_milli"] = max(v.ml_score_milli for v in ml_v) if ml_v else None
         seq = self.audit.record(AuditEvent(
+            inspection_path=trace["inspection_path"], ml_score_milli=trace["ml_score_milli"],
+            ml_provider=ml_v[0].ml_provider if ml_v else None, model_sha16=ml_v[0].model_sha16 if ml_v else None,
             event_type="tool_call", session_id=caller.session_id, agent_id=caller.agent_id, role=caller.role,
             tool_name=name, args_hash=args_hash, taint_state=trace["taint_state"], decision=decision.value,
             risk_score=risk, rule_ids=sorted(set(rules)), latency_ms=round(tm["security_total_ms"], 3),
@@ -275,6 +280,11 @@ class GatewayAgent:
                      "encoding_layers": ingress.encoding_layers if ingress else [], **details},
         ))
         tm["audit_ms"] = (time.perf_counter() - t0) * 1000
+        for v in (ingress, egress):
+            if v is not None:
+                tm["ml_tokenize_ms"] = tm.get("ml_tokenize_ms", 0.0) + v.stage_ms.get("ml_tokenize_ms", 0.0)
+                tm["ml_infer_ms"] = tm.get("ml_infer_ms", 0.0) + v.stage_ms.get("ml_infer_ms", 0.0)
+        tm["inspection_path"] = trace["inspection_path"]
         tm["total_ms"] = (time.perf_counter() - t_start) * 1000
         tm.update({f"audit_{k}": v for k, v in self.audit.last.items()})
         self.last_timings = tm
@@ -286,6 +296,20 @@ class GatewayAgent:
 
 
 # ====================================================================== assembly
+def resolve_ml(ml: Any) -> Any:
+    from omniguard.config import security_rules
+    from omniguard.security.ml_classifier import get_classifier, model_available
+
+    if ml is None or ml is False:
+        return None
+    if ml == "auto":
+        if not security_rules().get("ml", {}).get("enabled", False) or not model_available():
+            return None
+        return get_classifier()
+    if ml is True:
+        return get_classifier()
+    return ml  # an already-built classifier
+
 @dataclass
 class Stack:
     gateway: GatewayAgent
@@ -298,7 +322,9 @@ class Stack:
 def build_stack(regime: Regime | str, db_path: str | Path, *, rpc_url: str | None = None,
                 contract_address: str | None = None, w3=None, downstream: Downstream | None = None,
                 batch_size: int = DEFAULT_BATCH_SIZE, pinned_path: str | Path = PINNED_TOOLS_PATH,
-                verify_on_call: bool = True, async_anchor: bool = False) -> Stack:
+                verify_on_call: bool = True, async_anchor: bool = False, ml: Any = "auto") -> Stack:
+    """ml: "auto" = load the pinned classifier if its files are present (fail closed if they are present
+    but do not match their pins); True = require it; False/None = deterministic-only; or an instance."""
     regime = Regime(regime)
     store = AuditStore(db_path, regime)
     client = None
@@ -308,7 +334,8 @@ def build_stack(regime: Regime | str, db_path: str | Path, *, rpc_url: str | Non
         client = BlockchainAnchorClient(w3, contract_address, load_abi())
     audit = AuditAnchorAgent(store, batch_size=batch_size, anchor_client=client, async_anchor=async_anchor)
     gw = GatewayAgent(downstream or InProcessDownstream(), audit,
-                      integrity=ToolIntegrityRegistry.load(pinned_path), verify_on_call=verify_on_call)
+                      integrity=ToolIntegrityRegistry.load(pinned_path), verify_on_call=verify_on_call,
+                      ml=resolve_ml(ml))
     return Stack(gw, audit, store, contract_address, rpc_url)
 
 
@@ -380,13 +407,16 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--downstream", choices=["inprocess", "stdio"], default="stdio")
     ap.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
     ap.add_argument("--async-anchor", action="store_true", help="submit anchor transactions from a background worker")
+    ap.add_argument("--engine", choices=["auto", "hybrid", "deterministic"], default="auto",
+                    help="hybrid = require the pinned ONNX classifier; deterministic = fast path only")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8765)
     args = ap.parse_args(argv)
 
     downstream = StdioDownstream() if args.downstream == "stdio" else InProcessDownstream()
     stack = build_stack(args.regime, args.db, rpc_url=args.rpc_url, contract_address=args.contract,
-                        downstream=downstream, batch_size=args.batch_size, async_anchor=args.async_anchor)
+                        downstream=downstream, batch_size=args.batch_size, async_anchor=args.async_anchor,
+                        ml={"auto": "auto", "hybrid": True, "deterministic": False}[args.engine])
     if stack.contract_address:
         save_json(args.deployment_out, {"rpc_url": args.rpc_url, "contract_address": stack.contract_address,
                                         "db": str(Path(args.db).resolve()), "regime": args.regime})

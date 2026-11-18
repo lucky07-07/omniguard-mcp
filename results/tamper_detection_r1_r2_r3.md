@@ -30,38 +30,38 @@ excluding process start-up. S6a is detected inline by the gateway (no watcher in
 
 | Regime   | id continuity   | hash chain   | Merkle roots   | chain anchors   | manifest drift (incl. live server spawn)   | model integrity (re-hash 747 MB)   |   total sweep |
 |----------|-----------------|--------------|----------------|-----------------|--------------------------------------------|------------------------------------|---------------|
-| R1       | 0.80            | -            | -              | -               | -                                          | -                                  |          2.57 |
-| R2       | -               | 9.42         | -              | -               | -                                          | -                                  |         12.29 |
-| R3       | -               | 4.94         | 0.47           | 343.77          | 4070.34                                    | 2032.06                            |       6453.34 |
+| R1       | 0.68            | -            | -              | -               | -                                          | -                                  |          2.23 |
+| R2       | -               | 4.26         | -              | -               | -                                          | -                                  |          6.17 |
+| R3       | -               | 4.91         | 0.43           | 376.66          | 6166.21                                    | 3461.74                            |      10011.9  |
 
 ## Detail
 
 | ID   | Regime   | Detected   |   Detection rate (%) | Detection mechanism                                                          |   Verification sweep (ms) |
 |------|----------|------------|----------------------|------------------------------------------------------------------------------|---------------------------|
-| S1   | R1       | No         |                    0 | -                                                                            |                      2.67 |
-| S2   | R1       | Yes        |                  100 | SEQUENCE_GAP                                                                 |                      2.82 |
-| S3   | R1       | No         |                    0 | -                                                                            |                      5.1  |
-| S4   | R1       | No         |                    0 | -                                                                            |                      2.54 |
-| S5   | R1       | No         |                    0 | -                                                                            |                      3.03 |
-| S6a  | R1       | Yes        |                  100 | GATEWAY_PIN_MISMATCH (tools/list stripped)                                   |                      1.1  |
-| S6b  | R1       | No         |                    0 | -                                                                            |                      2.76 |
-| S7   | R1       | No         |                    0 | -                                                                            |                      3.44 |
-| S1   | R2       | Yes        |                  100 | HASH_MISMATCH                                                                |                      7.47 |
-| S2   | R2       | Yes        |                  100 | CHAIN_BREAK, SEQUENCE_GAP                                                    |                      7.48 |
-| S3   | R2       | No         |                    0 | -                                                                            |                      8.61 |
-| S4   | R2       | Yes        |                  100 | HASH_MISMATCH                                                                |                      7.7  |
-| S5   | R2       | No         |                    0 | -                                                                            |                      7.24 |
-| S6a  | R2       | Yes        |                  100 | GATEWAY_PIN_MISMATCH (tools/list stripped)                                   |                      0.98 |
-| S6b  | R2       | No         |                    0 | -                                                                            |                      8.3  |
-| S7   | R2       | No         |                    0 | -                                                                            |                      9.15 |
-| S1   | R3       | Yes        |                  100 | ANCHOR_RECORDS_MISMATCH, HASH_MISMATCH, MERKLE_ROOT_MISMATCH                 |                   5069.1  |
-| S2   | R3       | Yes        |                  100 | ANCHORED_RECORDS_MISSING, CHAIN_BREAK, MERKLE_BATCH_INCOMPLETE, SEQUENCE_GAP |                   5420.52 |
-| S3   | R3       | Yes        |                  100 | ANCHORED_BATCH_MISSING, TAIL_TRUNCATION                                      |                   5307.12 |
-| S4   | R3       | Yes        |                  100 | ANCHOR_RECORDS_MISMATCH, HASH_MISMATCH, MERKLE_ROOT_MISMATCH                 |                   5260.8  |
-| S5   | R3       | Yes        |                  100 | ANCHOR_RECORDS_MISMATCH, ANCHOR_ROOT_MISMATCH                                |                   5380.28 |
-| S6a  | R3       | Yes        |                  100 | GATEWAY_PIN_MISMATCH (tools/list stripped)                                   |                      0.89 |
-| S6b  | R3       | Yes        |                  100 | MANIFEST_DRIFT, REGISTRY_PIN_REWRITTEN                                       |                   5207.95 |
-| S7   | R3       | Yes        |                  100 | MODEL_FILE_TAMPERED                                                          |                   4894.58 |
+| S1   | R1       | No         |                    0 | -                                                                            |                      2.91 |
+| S2   | R1       | Yes        |                  100 | SEQUENCE_GAP                                                                 |                      2.62 |
+| S3   | R1       | No         |                    0 | -                                                                            |                      2.17 |
+| S4   | R1       | No         |                    0 | -                                                                            |                      2.26 |
+| S5   | R1       | No         |                    0 | -                                                                            |                      2.14 |
+| S6a  | R1       | Yes        |                  100 | GATEWAY_PIN_MISMATCH (tools/list stripped)                                   |                      0.89 |
+| S6b  | R1       | No         |                    0 | -                                                                            |                      2.25 |
+| S7   | R1       | No         |                    0 | -                                                                            |                      5.35 |
+| S1   | R2       | Yes        |                  100 | HASH_MISMATCH                                                                |                      6.16 |
+| S2   | R2       | Yes        |                  100 | CHAIN_BREAK, SEQUENCE_GAP                                                    |                      6.09 |
+| S3   | R2       | No         |                    0 | -                                                                            |                      5.67 |
+| S4   | R2       | Yes        |                  100 | HASH_MISMATCH                                                                |                      6.69 |
+| S5   | R2       | No         |                    0 | -                                                                            |                      7.38 |
+| S6a  | R2       | Yes        |                  100 | GATEWAY_PIN_MISMATCH (tools/list stripped)                                   |                      0.92 |
+| S6b  | R2       | No         |                    0 | -                                                                            |                      6.62 |
+| S7   | R2       | No         |                    0 | -                                                                            |                     21.92 |
+| S1   | R3       | Yes        |                  100 | ANCHOR_RECORDS_MISMATCH, HASH_MISMATCH, MERKLE_ROOT_MISMATCH                 |                   5937.35 |
+| S2   | R3       | Yes        |                  100 | ANCHORED_RECORDS_MISSING, CHAIN_BREAK, MERKLE_BATCH_INCOMPLETE, SEQUENCE_GAP |                   6346.57 |
+| S3   | R3       | Yes        |                  100 | ANCHORED_BATCH_MISSING, TAIL_TRUNCATION                                      |                   5735.33 |
+| S4   | R3       | Yes        |                  100 | ANCHOR_RECORDS_MISMATCH, HASH_MISMATCH, MERKLE_ROOT_MISMATCH                 |                   5945.75 |
+| S5   | R3       | Yes        |                  100 | ANCHOR_RECORDS_MISMATCH, ANCHOR_ROOT_MISMATCH                                |                   5889.01 |
+| S6a  | R3       | Yes        |                  100 | GATEWAY_PIN_MISMATCH (tools/list stripped)                                   |                      0.9  |
+| S6b  | R3       | Yes        |                  100 | MANIFEST_DRIFT, REGISTRY_PIN_REWRITTEN                                       |                   6243.13 |
+| S7   | R3       | Yes        |                  100 | MODEL_FILE_TAMPERED                                                          |                   6891.99 |
 
 R1 checks only id continuity, R2 only the hash chain, R3 the hash chain plus Merkle roots,
 on-chain anchors, tool-manifest drift and ML model/tokenizer integrity against the watcher's own snapshots.

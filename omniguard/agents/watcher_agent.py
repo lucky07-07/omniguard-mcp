@@ -13,6 +13,7 @@ Checks performed depend on what the audit regime provides:
     R1  id continuity only (no integrity metadata exists)
     R2  hash-chain continuity
     R3  hash chain + Merkle roots + on-chain anchors + tool manifest drift
+        + ML model/tokenizer integrity (files on disk and model digests recorded in the log)
 
     python -m omniguard.agents.watcher_agent --db audit.db --regime R3 \
         --rpc-url http://127.0.0.1:8545 --contract 0x... --manifest-snapshot pinned.json --json
@@ -21,6 +22,7 @@ Checks performed depend on what the audit regime provides:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import shlex
 import sys
@@ -66,7 +68,8 @@ class IntegrityWatcher:
     def __init__(self, db_path: str | Path, regime: Regime | str, *, rpc_url: str | None = None,
                  contract_address: str | None = None, abi_path: str | Path | None = None,
                  manifest_snapshot: str | Path | dict | None = None, tools_cmd: list[str] | None = None,
-                 w3=None):
+                 w3=None, model_manifest_snapshot: str | Path | dict | None = None,
+                 model_dir: str | Path | None = None):
         self.db_path = Path(db_path)
         self.regime = Regime(regime)
         self.rpc_url = rpc_url
@@ -77,6 +80,10 @@ class IntegrityWatcher:
         if isinstance(manifest_snapshot, (str, Path)):
             manifest_snapshot = json.loads(Path(manifest_snapshot).read_text(encoding="utf-8"))
         self.snapshot: dict[str, Any] | None = manifest_snapshot
+        if isinstance(model_manifest_snapshot, (str, Path)):
+            model_manifest_snapshot = json.loads(Path(model_manifest_snapshot).read_text(encoding="utf-8"))
+        self.model_snapshot: dict[str, Any] | None = model_manifest_snapshot
+        self.model_dir = Path(model_dir) if model_dir else None
 
     def _alert(self, rep: SweepReport, violation: str, **kw: Any) -> None:
         rep.alerts.append(TamperAlert(violation=violation, regime=self.regime.value, **kw))
@@ -97,6 +104,8 @@ class IntegrityWatcher:
                         self._timed(rep, "chain_anchors", self.check_anchors, store, recomputed)
                     if self.snapshot is not None:
                         self._timed(rep, "manifest_drift", self.check_manifest, store)
+                    if self.model_snapshot is not None:
+                        self._timed(rep, "model_integrity", self.check_model, store)
         finally:
             store.conn.close()
         rep.elapsed_ms = (time.perf_counter() - t_all) * 1000
@@ -233,6 +242,33 @@ class IntegrityWatcher:
                 ds.close()
 
 
+    def check_model(self, rep: SweepReport, store: AuditStore) -> None:
+        """Re-hash the deployed model + tokenizer against the watcher's own pinned snapshot, and check
+        that every hybrid-ML audit record was produced by the pinned model (model_sha16 is chained)."""
+        files = self.model_snapshot.get("files", {})
+        if self.model_dir is not None:
+            for name, pin in files.items():
+                path = self.model_dir / name
+                if not path.exists():
+                    self._alert(rep, "MODEL_FILE_MISSING", severity="critical", tool_name=name,
+                                detail=f"{path} is missing")
+                    continue
+                h = hashlib.sha256()
+                with open(path, "rb") as fh:
+                    for chunk in iter(lambda: fh.read(1 << 22), b""):
+                        h.update(chunk)
+                if h.hexdigest() != pin["sha256"]:
+                    self._alert(rep, "MODEL_FILE_TAMPERED", severity="critical", tool_name=name,
+                                detail=f"sha256 {h.hexdigest()[:16]}... != watcher pin {pin['sha256'][:16]}...")
+        expected16 = files.get("model.onnx", {}).get("sha256", "")[:16]
+        bad = store.conn.execute(
+            f"SELECT seq_num, model_sha16 FROM {store.table} WHERE model_sha16 IS NOT NULL AND model_sha16 != ? "
+            "ORDER BY seq_num", (expected16,)).fetchall()
+        if bad:
+            self._alert(rep, "MODEL_DIGEST_MISMATCH_IN_AUDIT", severity="critical", seq_start=bad[0][0],
+                        seq_end=bad[-1][0], detail=f"{len(bad)} decisions made by unpinned model {bad[0][1]}")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="OmniGuard independent integrity watcher (Agent 3)")
     ap.add_argument("--db", required=True)
@@ -246,6 +282,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--live-sample-server", action="store_true",
                     help="live drift check against the reference server (spawned by the watcher itself)")
     ap.add_argument("--tools-overrides", default=None, help="deployment overrides file the reference server loads")
+    ap.add_argument("--model-manifest-snapshot", default=None, help="watcher's own copy of the model manifest (R3)")
+    ap.add_argument("--model-dir", default=None, help="deployed model directory to re-hash (R3)")
     ap.add_argument("--interval", type=float, default=0.0, help="seconds between sweeps; 0 = single sweep")
     ap.add_argument("--json", action="store_true", help="print the sweep report as one JSON line on stdout")
     ap.add_argument("--out", default=None, help="write the last report to this JSON file")
@@ -261,7 +299,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.tools_overrides:
             tools_cmd += ["--overrides", args.tools_overrides]
     watcher = IntegrityWatcher(args.db, args.regime, rpc_url=rpc, contract_address=contract, abi_path=args.abi,
-                               manifest_snapshot=args.manifest_snapshot, tools_cmd=tools_cmd)
+                               manifest_snapshot=args.manifest_snapshot, tools_cmd=tools_cmd,
+                               model_manifest_snapshot=args.model_manifest_snapshot, model_dir=args.model_dir)
     while True:
         rep = watcher.sweep()
         for a in rep.alerts:

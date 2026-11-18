@@ -1,310 +1,750 @@
 {
   "config": {
-    "requests": 500,
+    "requests_per_workload": 500,
     "batch_size": 16,
     "seed": 11,
-    "warmup_requests": 30,
+    "warmup_requests": 40,
     "chain": "eth-tester/py-evm node over HTTP JSON-RPC",
     "sqlite": "WAL, synchronous=NORMAL, commit per event"
   },
-  "regimes": {
-    "R1": {
-      "regime": "R1",
-      "anchoring": "none",
-      "requests": 500,
-      "decisions": {
-        "ALLOW": 276,
-        "DENY": 224
-      },
-      "e2e_latency_ms": {
-        "mean": 0.511,
-        "p50": 0.475,
-        "p95": 0.7213,
-        "p99": 0.8923,
-        "max": 21.7791
-      },
-      "stage_ms_mean_per_request": {
-        "tool_integrity": 0.1293,
-        "security_engine": 0.183,
-        "downstream_tool": 0.0136,
-        "audit_total": 0.1382,
-        "hash_chain": 0.0,
-        "merkle_build_amortized": 0.0,
-        "anchor_tx_amortized": 0.0
-      },
-      "per_batch_ms": {
-        "merkle_build_mean": 0.0,
-        "anchor_tx_mean": 0.0,
-        "anchor_tx_p95": 0.0
-      },
-      "security_engine_ms": {
-        "mean": 0.183,
-        "p50": 0.2035,
-        "p95": 0.3847,
-        "p99": 0.4963,
-        "max": 0.6229
-      },
-      "audit_ms": {
-        "mean": 0.1382,
-        "p50": 0.0844,
-        "p95": 0.1455,
-        "p99": 0.2318,
-        "max": 21.3352
-      },
-      "storage": {
-        "audit_events": 516,
-        "db_bytes": 184320,
-        "bytes_per_event": 357.21,
-        "merkle_proof_bytes": 0,
-        "merkle_batches": 0,
-        "onchain_tx": 0,
-        "onchain_gas_total": 0,
-        "onchain_gas_per_batch": 0,
-        "onchain_gas_per_event": 0.0,
-        "onchain_calldata_bytes_total": 0,
-        "onchain_calldata_bytes_per_event": 0.0
-      },
-      "overhead_vs_R1": {
-        "mean": {
-          "abs_ms": 0.0,
-          "pct": 0.0
+  "workloads": {
+    "structured": {
+      "regimes": {
+        "R1": {
+          "regime": "R1",
+          "anchoring": "none",
+          "requests": 500,
+          "routed_to_ml": 0,
+          "ml_provider": "cuda",
+          "decisions": {
+            "ALLOW": 304,
+            "DENY": 196
+          },
+          "e2e_latency_ms": {
+            "mean": 0.6425,
+            "p50": 0.5667,
+            "p95": 1.0907,
+            "p99": 1.5025,
+            "max": 20.7478
+          },
+          "e2e_latency_ms_by_path": {
+            "deterministic": {
+              "mean": 0.6425,
+              "p50": 0.5667,
+              "p95": 1.0907,
+              "p99": 1.5025,
+              "max": 20.7478
+            }
+          },
+          "ml_infer_ms_when_routed": {
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0,
+            "p99": 0.0,
+            "max": 0.0
+          },
+          "stage_ms_mean_per_request": {
+            "tool_integrity": 0.1567,
+            "deterministic_engine": 0.2462,
+            "ml_tokenize": 0.0,
+            "ml_onnx_inference": 0.0,
+            "downstream_tool": 0.0209,
+            "audit_total": 0.1615,
+            "hash_chain": 0.0,
+            "merkle_build_amortized": 0.0,
+            "anchor_tx_amortized": 0.0
+          },
+          "per_batch_ms": {
+            "merkle_build_mean": 0.0,
+            "anchor_tx_mean": 0.0,
+            "anchor_tx_p95": 0.0
+          },
+          "deterministic_engine_ms": {
+            "mean": 0.2462,
+            "p50": 0.2436,
+            "p95": 0.5198,
+            "p99": 0.729,
+            "max": 0.8526
+          },
+          "storage": {
+            "audit_events": 508,
+            "db_bytes": 184320,
+            "bytes_per_event": 362.83,
+            "merkle_proof_bytes": 0,
+            "merkle_batches": 0,
+            "onchain_tx": 0,
+            "onchain_gas_total": 0,
+            "onchain_gas_per_batch": 0,
+            "onchain_gas_per_event": 0.0,
+            "onchain_calldata_bytes_total": 0,
+            "onchain_calldata_bytes_per_event": 0.0
+          },
+          "overhead_vs_R1": {
+            "mean": {
+              "abs_ms": 0.0,
+              "pct": 0.0
+            },
+            "p50": {
+              "abs_ms": 0.0,
+              "pct": 0.0
+            },
+            "p95": {
+              "abs_ms": 0.0,
+              "pct": 0.0
+            },
+            "p99": {
+              "abs_ms": 0.0,
+              "pct": 0.0
+            }
+          }
         },
-        "p50": {
-          "abs_ms": 0.0,
-          "pct": 0.0
+        "R2": {
+          "regime": "R2",
+          "anchoring": "none",
+          "requests": 500,
+          "routed_to_ml": 0,
+          "ml_provider": "cuda",
+          "decisions": {
+            "ALLOW": 304,
+            "DENY": 196
+          },
+          "e2e_latency_ms": {
+            "mean": 0.6359,
+            "p50": 0.5958,
+            "p95": 1.1084,
+            "p99": 1.4259,
+            "max": 1.8138
+          },
+          "e2e_latency_ms_by_path": {
+            "deterministic": {
+              "mean": 0.6359,
+              "p50": 0.5958,
+              "p95": 1.1084,
+              "p99": 1.4259,
+              "max": 1.8138
+            }
+          },
+          "ml_infer_ms_when_routed": {
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0,
+            "p99": 0.0,
+            "max": 0.0
+          },
+          "stage_ms_mean_per_request": {
+            "tool_integrity": 0.1619,
+            "deterministic_engine": 0.2576,
+            "ml_tokenize": 0.0,
+            "ml_onnx_inference": 0.0,
+            "downstream_tool": 0.0218,
+            "audit_total": 0.1367,
+            "hash_chain": 0.02423,
+            "merkle_build_amortized": 0.0,
+            "anchor_tx_amortized": 0.0
+          },
+          "per_batch_ms": {
+            "merkle_build_mean": 0.0,
+            "anchor_tx_mean": 0.0,
+            "anchor_tx_p95": 0.0
+          },
+          "deterministic_engine_ms": {
+            "mean": 0.2576,
+            "p50": 0.249,
+            "p95": 0.5283,
+            "p99": 0.6999,
+            "max": 1.2286
+          },
+          "storage": {
+            "audit_events": 508,
+            "db_bytes": 258048,
+            "bytes_per_event": 507.97,
+            "merkle_proof_bytes": 0,
+            "merkle_batches": 0,
+            "onchain_tx": 0,
+            "onchain_gas_total": 0,
+            "onchain_gas_per_batch": 0,
+            "onchain_gas_per_event": 0.0,
+            "onchain_calldata_bytes_total": 0,
+            "onchain_calldata_bytes_per_event": 0.0
+          },
+          "overhead_vs_R1": {
+            "mean": {
+              "abs_ms": -0.0066,
+              "pct": -1.03
+            },
+            "p50": {
+              "abs_ms": 0.0291,
+              "pct": 5.13
+            },
+            "p95": {
+              "abs_ms": 0.0177,
+              "pct": 1.62
+            },
+            "p99": {
+              "abs_ms": -0.0766,
+              "pct": -5.1
+            }
+          }
         },
-        "p95": {
-          "abs_ms": 0.0,
-          "pct": 0.0
+        "R3": {
+          "regime": "R3",
+          "anchoring": "synchronous in request path",
+          "requests": 500,
+          "routed_to_ml": 0,
+          "ml_provider": "cuda",
+          "decisions": {
+            "ALLOW": 304,
+            "DENY": 196
+          },
+          "e2e_latency_ms": {
+            "mean": 6.4833,
+            "p50": 0.6421,
+            "p95": 67.8515,
+            "p99": 111.4246,
+            "max": 189.4042
+          },
+          "e2e_latency_ms_by_path": {
+            "deterministic": {
+              "mean": 6.4833,
+              "p50": 0.6421,
+              "p95": 67.8515,
+              "p99": 111.4246,
+              "max": 189.4042
+            }
+          },
+          "ml_infer_ms_when_routed": {
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0,
+            "p99": 0.0,
+            "max": 0.0
+          },
+          "stage_ms_mean_per_request": {
+            "tool_integrity": 0.1726,
+            "deterministic_engine": 0.2741,
+            "ml_tokenize": 0.0,
+            "ml_onnx_inference": 0.0,
+            "downstream_tool": 0.0248,
+            "audit_total": 5.9475,
+            "hash_chain": 0.02568,
+            "merkle_build_amortized": 0.0364,
+            "anchor_tx_amortized": 5.9009
+          },
+          "per_batch_ms": {
+            "merkle_build_mean": 0.5872,
+            "anchor_tx_mean": 92.2008,
+            "anchor_tx_p95": 147.5137
+          },
+          "deterministic_engine_ms": {
+            "mean": 0.2741,
+            "p50": 0.2707,
+            "p95": 0.6282,
+            "p99": 0.8589,
+            "max": 1.5249
+          },
+          "storage": {
+            "audit_events": 508,
+            "db_bytes": 483328,
+            "bytes_per_event": 951.43,
+            "merkle_proof_bytes": 198240,
+            "merkle_batches": 32,
+            "onchain_tx": 32,
+            "onchain_gas_total": 3273875,
+            "onchain_gas_per_batch": 102308.6,
+            "onchain_gas_per_event": 6444.6,
+            "onchain_calldata_bytes_total": 4224,
+            "onchain_calldata_bytes_per_event": 8.31
+          },
+          "overhead_vs_R1": {
+            "mean": {
+              "abs_ms": 5.8408,
+              "pct": 909.07
+            },
+            "p50": {
+              "abs_ms": 0.0754,
+              "pct": 13.31
+            },
+            "p95": {
+              "abs_ms": 66.7608,
+              "pct": 6120.91
+            },
+            "p99": {
+              "abs_ms": 109.9221,
+              "pct": 7315.95
+            }
+          }
         },
-        "p99": {
-          "abs_ms": 0.0,
-          "pct": 0.0
+        "R3-async": {
+          "regime": "R3-async",
+          "anchoring": "async background worker",
+          "requests": 500,
+          "routed_to_ml": 0,
+          "ml_provider": "cuda",
+          "decisions": {
+            "ALLOW": 304,
+            "DENY": 196
+          },
+          "e2e_latency_ms": {
+            "mean": 0.84,
+            "p50": 0.7443,
+            "p95": 1.6771,
+            "p99": 2.7009,
+            "max": 4.6469
+          },
+          "e2e_latency_ms_by_path": {
+            "deterministic": {
+              "mean": 0.84,
+              "p50": 0.7443,
+              "p95": 1.6771,
+              "p99": 2.7009,
+              "max": 4.6469
+            }
+          },
+          "ml_infer_ms_when_routed": {
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0,
+            "p99": 0.0,
+            "max": 0.0
+          },
+          "stage_ms_mean_per_request": {
+            "tool_integrity": 0.1681,
+            "deterministic_engine": 0.2708,
+            "ml_tokenize": 0.0,
+            "ml_onnx_inference": 0.0,
+            "downstream_tool": 0.0408,
+            "audit_total": 0.2961,
+            "hash_chain": 0.02532,
+            "merkle_build_amortized": 0.0556,
+            "anchor_tx_amortized": 0.0
+          },
+          "per_batch_ms": {
+            "merkle_build_mean": 0.897,
+            "anchor_tx_mean": 81.5582,
+            "anchor_tx_p95": 111.4067
+          },
+          "deterministic_engine_ms": {
+            "mean": 0.2708,
+            "p50": 0.2823,
+            "p95": 0.5261,
+            "p99": 0.7825,
+            "max": 1.6129
+          },
+          "storage": {
+            "audit_events": 508,
+            "db_bytes": 483328,
+            "bytes_per_event": 951.43,
+            "merkle_proof_bytes": 198240,
+            "merkle_batches": 32,
+            "onchain_tx": 32,
+            "onchain_gas_total": 3273947,
+            "onchain_gas_per_batch": 102310.8,
+            "onchain_gas_per_event": 6444.8,
+            "onchain_calldata_bytes_total": 4224,
+            "onchain_calldata_bytes_per_event": 8.31
+          },
+          "overhead_vs_R1": {
+            "mean": {
+              "abs_ms": 0.1975,
+              "pct": 30.74
+            },
+            "p50": {
+              "abs_ms": 0.1776,
+              "pct": 31.34
+            },
+            "p95": {
+              "abs_ms": 0.5864,
+              "pct": 53.76
+            },
+            "p99": {
+              "abs_ms": 1.1984,
+              "pct": 79.76
+            }
+          }
         }
       }
     },
-    "R2": {
-      "regime": "R2",
-      "anchoring": "none",
-      "requests": 500,
-      "decisions": {
-        "ALLOW": 276,
-        "DENY": 224
-      },
-      "e2e_latency_ms": {
-        "mean": 0.4767,
-        "p50": 0.4944,
-        "p95": 0.7121,
-        "p99": 0.8543,
-        "max": 0.957
-      },
-      "stage_ms_mean_per_request": {
-        "tool_integrity": 0.1288,
-        "security_engine": 0.1834,
-        "downstream_tool": 0.0138,
-        "audit_total": 0.1046,
-        "hash_chain": 0.01767,
-        "merkle_build_amortized": 0.0,
-        "anchor_tx_amortized": 0.0
-      },
-      "per_batch_ms": {
-        "merkle_build_mean": 0.0,
-        "anchor_tx_mean": 0.0,
-        "anchor_tx_p95": 0.0
-      },
-      "security_engine_ms": {
-        "mean": 0.1834,
-        "p50": 0.2049,
-        "p95": 0.385,
-        "p99": 0.4387,
-        "max": 0.6097
-      },
-      "audit_ms": {
-        "mean": 0.1046,
-        "p50": 0.0978,
-        "p95": 0.1641,
-        "p99": 0.1929,
-        "max": 0.3809
-      },
-      "storage": {
-        "audit_events": 516,
-        "db_bytes": 258048,
-        "bytes_per_event": 500.09,
-        "merkle_proof_bytes": 0,
-        "merkle_batches": 0,
-        "onchain_tx": 0,
-        "onchain_gas_total": 0,
-        "onchain_gas_per_batch": 0,
-        "onchain_gas_per_event": 0.0,
-        "onchain_calldata_bytes_total": 0,
-        "onchain_calldata_bytes_per_event": 0.0
-      },
-      "overhead_vs_R1": {
-        "mean": {
-          "abs_ms": -0.0343,
-          "pct": -6.71
+    "unstructured": {
+      "regimes": {
+        "R1": {
+          "regime": "R1",
+          "anchoring": "none",
+          "requests": 500,
+          "routed_to_ml": 462,
+          "ml_provider": "cuda",
+          "decisions": {
+            "ALLOW": 376,
+            "DENY": 124
+          },
+          "e2e_latency_ms": {
+            "mean": 15.5798,
+            "p50": 14.5946,
+            "p95": 24.8396,
+            "p99": 46.6165,
+            "max": 59.5379
+          },
+          "e2e_latency_ms_by_path": {
+            "deterministic": {
+              "mean": 0.9712,
+              "p50": 0.8949,
+              "p95": 1.5936,
+              "p99": 1.795,
+              "max": 1.827
+            },
+            "hybrid_ml": {
+              "mean": 16.7814,
+              "p50": 14.9585,
+              "p95": 25.0092,
+              "p99": 47.2675,
+              "max": 59.5379
+            }
+          },
+          "ml_infer_ms_when_routed": {
+            "mean": 15.3425,
+            "p50": 13.6648,
+            "p95": 22.9961,
+            "p99": 33.9689,
+            "max": 58.4865
+          },
+          "stage_ms_mean_per_request": {
+            "tool_integrity": 0.1979,
+            "deterministic_engine": 0.5384,
+            "ml_tokenize": 0.2164,
+            "ml_onnx_inference": 14.1765,
+            "downstream_tool": 0.0432,
+            "audit_total": 0.2823,
+            "hash_chain": 0.0,
+            "merkle_build_amortized": 0.0,
+            "anchor_tx_amortized": 0.0
+          },
+          "per_batch_ms": {
+            "merkle_build_mean": 0.0,
+            "anchor_tx_mean": 0.0,
+            "anchor_tx_p95": 0.0
+          },
+          "deterministic_engine_ms": {
+            "mean": 0.5384,
+            "p50": 0.5069,
+            "p95": 0.8932,
+            "p99": 1.1382,
+            "max": 1.5415
+          },
+          "storage": {
+            "audit_events": 504,
+            "db_bytes": 188416,
+            "bytes_per_event": 373.84,
+            "merkle_proof_bytes": 0,
+            "merkle_batches": 0,
+            "onchain_tx": 0,
+            "onchain_gas_total": 0,
+            "onchain_gas_per_batch": 0,
+            "onchain_gas_per_event": 0.0,
+            "onchain_calldata_bytes_total": 0,
+            "onchain_calldata_bytes_per_event": 0.0
+          },
+          "overhead_vs_R1": {
+            "mean": {
+              "abs_ms": 0.0,
+              "pct": 0.0
+            },
+            "p50": {
+              "abs_ms": 0.0,
+              "pct": 0.0
+            },
+            "p95": {
+              "abs_ms": 0.0,
+              "pct": 0.0
+            },
+            "p99": {
+              "abs_ms": 0.0,
+              "pct": 0.0
+            }
+          }
         },
-        "p50": {
-          "abs_ms": 0.0194,
-          "pct": 4.08
+        "R2": {
+          "regime": "R2",
+          "anchoring": "none",
+          "requests": 500,
+          "routed_to_ml": 462,
+          "ml_provider": "cuda",
+          "decisions": {
+            "ALLOW": 376,
+            "DENY": 124
+          },
+          "e2e_latency_ms": {
+            "mean": 14.752,
+            "p50": 14.4662,
+            "p95": 23.6291,
+            "p99": 28.24,
+            "max": 30.1447
+          },
+          "e2e_latency_ms_by_path": {
+            "deterministic": {
+              "mean": 0.8964,
+              "p50": 0.873,
+              "p95": 1.0845,
+              "p99": 1.2099,
+              "max": 1.2178
+            },
+            "hybrid_ml": {
+              "mean": 15.8916,
+              "p50": 14.69,
+              "p95": 24.0531,
+              "p99": 28.265,
+              "max": 30.1447
+            }
+          },
+          "ml_infer_ms_when_routed": {
+            "mean": 14.5869,
+            "p50": 13.3878,
+            "p95": 22.1264,
+            "p99": 26.2005,
+            "max": 28.567
+          },
+          "stage_ms_mean_per_request": {
+            "tool_integrity": 0.1873,
+            "deterministic_engine": 0.5061,
+            "ml_tokenize": 0.2039,
+            "ml_onnx_inference": 13.4783,
+            "downstream_tool": 0.0405,
+            "audit_total": 0.2191,
+            "hash_chain": 0.0371,
+            "merkle_build_amortized": 0.0,
+            "anchor_tx_amortized": 0.0
+          },
+          "per_batch_ms": {
+            "merkle_build_mean": 0.0,
+            "anchor_tx_mean": 0.0,
+            "anchor_tx_p95": 0.0
+          },
+          "deterministic_engine_ms": {
+            "mean": 0.5061,
+            "p50": 0.4965,
+            "p95": 0.7482,
+            "p99": 1.0148,
+            "max": 1.2409
+          },
+          "storage": {
+            "audit_events": 504,
+            "db_bytes": 262144,
+            "bytes_per_event": 520.13,
+            "merkle_proof_bytes": 0,
+            "merkle_batches": 0,
+            "onchain_tx": 0,
+            "onchain_gas_total": 0,
+            "onchain_gas_per_batch": 0,
+            "onchain_gas_per_event": 0.0,
+            "onchain_calldata_bytes_total": 0,
+            "onchain_calldata_bytes_per_event": 0.0
+          },
+          "overhead_vs_R1": {
+            "mean": {
+              "abs_ms": -0.8278,
+              "pct": -5.31
+            },
+            "p50": {
+              "abs_ms": -0.1284,
+              "pct": -0.88
+            },
+            "p95": {
+              "abs_ms": -1.2105,
+              "pct": -4.87
+            },
+            "p99": {
+              "abs_ms": -18.3765,
+              "pct": -39.42
+            }
+          }
         },
-        "p95": {
-          "abs_ms": -0.0092,
-          "pct": -1.28
+        "R3": {
+          "regime": "R3",
+          "anchoring": "synchronous in request path",
+          "requests": 500,
+          "routed_to_ml": 462,
+          "ml_provider": "cuda",
+          "decisions": {
+            "ALLOW": 376,
+            "DENY": 124
+          },
+          "e2e_latency_ms": {
+            "mean": 21.0891,
+            "p50": 14.6895,
+            "p95": 90.6685,
+            "p99": 134.411,
+            "max": 152.3613
+          },
+          "e2e_latency_ms_by_path": {
+            "deterministic": {
+              "mean": 5.5651,
+              "p50": 0.8791,
+              "p95": 13.8285,
+              "p99": 90.1147,
+              "max": 94.0139
+            },
+            "hybrid_ml": {
+              "mean": 22.3659,
+              "p50": 14.9812,
+              "p95": 90.7089,
+              "p99": 137.276,
+              "max": 152.3613
+            }
+          },
+          "ml_infer_ms_when_routed": {
+            "mean": 15.1148,
+            "p50": 13.5082,
+            "p95": 24.0651,
+            "p99": 27.6505,
+            "max": 28.7247
+          },
+          "stage_ms_mean_per_request": {
+            "tool_integrity": 0.1961,
+            "deterministic_engine": 0.5231,
+            "ml_tokenize": 0.2146,
+            "ml_onnx_inference": 13.9661,
+            "downstream_tool": 0.0414,
+            "audit_total": 6.0293,
+            "hash_chain": 0.03858,
+            "merkle_build_amortized": 0.0427,
+            "anchor_tx_amortized": 5.9208
+          },
+          "per_batch_ms": {
+            "merkle_build_mean": 0.6894,
+            "anchor_tx_mean": 92.5119,
+            "anchor_tx_p95": 130.3501
+          },
+          "deterministic_engine_ms": {
+            "mean": 0.5231,
+            "p50": 0.5114,
+            "p95": 0.839,
+            "p99": 1.0094,
+            "max": 1.3937
+          },
+          "storage": {
+            "audit_events": 504,
+            "db_bytes": 487424,
+            "bytes_per_event": 967.11,
+            "merkle_proof_bytes": 196284,
+            "merkle_batches": 32,
+            "onchain_tx": 32,
+            "onchain_gas_total": 3273923,
+            "onchain_gas_per_batch": 102310.1,
+            "onchain_gas_per_event": 6495.9,
+            "onchain_calldata_bytes_total": 4224,
+            "onchain_calldata_bytes_per_event": 8.38
+          },
+          "overhead_vs_R1": {
+            "mean": {
+              "abs_ms": 5.5093,
+              "pct": 35.36
+            },
+            "p50": {
+              "abs_ms": 0.0949,
+              "pct": 0.65
+            },
+            "p95": {
+              "abs_ms": 65.8289,
+              "pct": 265.02
+            },
+            "p99": {
+              "abs_ms": 87.7945,
+              "pct": 188.33
+            }
+          }
         },
-        "p99": {
-          "abs_ms": -0.038,
-          "pct": -4.26
-        }
-      }
-    },
-    "R3": {
-      "regime": "R3",
-      "anchoring": "synchronous in request path",
-      "requests": 500,
-      "decisions": {
-        "ALLOW": 276,
-        "DENY": 224
-      },
-      "e2e_latency_ms": {
-        "mean": 8.0374,
-        "p50": 0.5407,
-        "p95": 94.438,
-        "p99": 138.1872,
-        "max": 154.9136
-      },
-      "stage_ms_mean_per_request": {
-        "tool_integrity": 0.1448,
-        "security_engine": 0.2059,
-        "downstream_tool": 0.0169,
-        "audit_total": 7.6158,
-        "hash_chain": 0.01994,
-        "merkle_build_amortized": 0.0305,
-        "anchor_tx_amortized": 7.7168
-      },
-      "per_batch_ms": {
-        "merkle_build_mean": 0.4913,
-        "anchor_tx_mean": 116.921,
-        "anchor_tx_p95": 147.0598
-      },
-      "security_engine_ms": {
-        "mean": 0.2059,
-        "p50": 0.2143,
-        "p95": 0.4242,
-        "p99": 0.5258,
-        "max": 0.656
-      },
-      "audit_ms": {
-        "mean": 7.6158,
-        "p50": 0.1111,
-        "p95": 94.0069,
-        "p99": 137.5595,
-        "max": 154.2481
-      },
-      "storage": {
-        "audit_events": 516,
-        "db_bytes": 487424,
-        "bytes_per_event": 944.62,
-        "merkle_proof_bytes": 200976,
-        "merkle_batches": 33,
-        "onchain_tx": 33,
-        "onchain_gas_total": 3375753,
-        "onchain_gas_per_batch": 102295.5,
-        "onchain_gas_per_event": 6542.2,
-        "onchain_calldata_bytes_total": 4356,
-        "onchain_calldata_bytes_per_event": 8.44
-      },
-      "overhead_vs_R1": {
-        "mean": {
-          "abs_ms": 7.5264,
-          "pct": 1472.88
-        },
-        "p50": {
-          "abs_ms": 0.0657,
-          "pct": 13.83
-        },
-        "p95": {
-          "abs_ms": 93.7167,
-          "pct": 12992.75
-        },
-        "p99": {
-          "abs_ms": 137.2949,
-          "pct": 15386.63
-        }
-      }
-    },
-    "R3-async": {
-      "regime": "R3-async",
-      "anchoring": "async background worker",
-      "requests": 500,
-      "decisions": {
-        "ALLOW": 276,
-        "DENY": 224
-      },
-      "e2e_latency_ms": {
-        "mean": 0.6307,
-        "p50": 0.5471,
-        "p95": 1.269,
-        "p99": 1.9934,
-        "max": 2.2851
-      },
-      "stage_ms_mean_per_request": {
-        "tool_integrity": 0.1364,
-        "security_engine": 0.1938,
-        "downstream_tool": 0.0171,
-        "audit_total": 0.2332,
-        "hash_chain": 0.01883,
-        "merkle_build_amortized": 0.0462,
-        "anchor_tx_amortized": 0.0
-      },
-      "per_batch_ms": {
-        "merkle_build_mean": 0.7448,
-        "anchor_tx_mean": 108.7423,
-        "anchor_tx_p95": 146.2569
-      },
-      "security_engine_ms": {
-        "mean": 0.1938,
-        "p50": 0.209,
-        "p95": 0.4036,
-        "p99": 0.5387,
-        "max": 0.9336
-      },
-      "audit_ms": {
-        "mean": 0.2332,
-        "p50": 0.1109,
-        "p95": 0.8024,
-        "p99": 1.4119,
-        "max": 1.8125
-      },
-      "storage": {
-        "audit_events": 516,
-        "db_bytes": 487424,
-        "bytes_per_event": 944.62,
-        "merkle_proof_bytes": 200976,
-        "merkle_batches": 33,
-        "onchain_tx": 33,
-        "onchain_gas_total": 3375741,
-        "onchain_gas_per_batch": 102295.2,
-        "onchain_gas_per_event": 6542.1,
-        "onchain_calldata_bytes_total": 4356,
-        "onchain_calldata_bytes_per_event": 8.44
-      },
-      "overhead_vs_R1": {
-        "mean": {
-          "abs_ms": 0.1197,
-          "pct": 23.42
-        },
-        "p50": {
-          "abs_ms": 0.0721,
-          "pct": 15.18
-        },
-        "p95": {
-          "abs_ms": 0.5477,
-          "pct": 75.93
-        },
-        "p99": {
-          "abs_ms": 1.1011,
-          "pct": 123.4
+        "R3-async": {
+          "regime": "R3-async",
+          "anchoring": "async background worker",
+          "requests": 500,
+          "routed_to_ml": 462,
+          "ml_provider": "cuda",
+          "decisions": {
+            "ALLOW": 376,
+            "DENY": 124
+          },
+          "e2e_latency_ms": {
+            "mean": 16.8092,
+            "p50": 16.5384,
+            "p95": 26.6264,
+            "p99": 29.5381,
+            "max": 37.5936
+          },
+          "e2e_latency_ms_by_path": {
+            "deterministic": {
+              "mean": 1.1823,
+              "p50": 1.0396,
+              "p95": 1.8517,
+              "p99": 2.1317,
+              "max": 2.1939
+            },
+            "hybrid_ml": {
+              "mean": 18.0946,
+              "p50": 16.9278,
+              "p95": 26.7906,
+              "p99": 29.6899,
+              "max": 37.5936
+            }
+          },
+          "ml_infer_ms_when_routed": {
+            "mean": 16.576,
+            "p50": 15.5317,
+            "p95": 24.705,
+            "p99": 27.8258,
+            "max": 36.0564
+          },
+          "stage_ms_mean_per_request": {
+            "tool_integrity": 0.2174,
+            "deterministic_engine": 0.569,
+            "ml_tokenize": 0.2277,
+            "ml_onnx_inference": 15.3162,
+            "downstream_tool": 0.0444,
+            "audit_total": 0.309,
+            "hash_chain": 0.04086,
+            "merkle_build_amortized": 0.0431,
+            "anchor_tx_amortized": 0.0
+          },
+          "per_batch_ms": {
+            "merkle_build_mean": 0.6956,
+            "anchor_tx_mean": 90.4316,
+            "anchor_tx_p95": 117.7273
+          },
+          "deterministic_engine_ms": {
+            "mean": 0.569,
+            "p50": 0.5383,
+            "p95": 0.8611,
+            "p99": 1.197,
+            "max": 1.6269
+          },
+          "storage": {
+            "audit_events": 504,
+            "db_bytes": 487424,
+            "bytes_per_event": 967.11,
+            "merkle_proof_bytes": 196284,
+            "merkle_batches": 32,
+            "onchain_tx": 32,
+            "onchain_gas_total": 3273911,
+            "onchain_gas_per_batch": 102309.7,
+            "onchain_gas_per_event": 6495.9,
+            "onchain_calldata_bytes_total": 4224,
+            "onchain_calldata_bytes_per_event": 8.38
+          },
+          "overhead_vs_R1": {
+            "mean": {
+              "abs_ms": 1.2294,
+              "pct": 7.89
+            },
+            "p50": {
+              "abs_ms": 1.9438,
+              "pct": 13.32
+            },
+            "p95": {
+              "abs_ms": 1.7868,
+              "pct": 7.19
+            },
+            "p99": {
+              "abs_ms": -17.0784,
+              "pct": -36.64
+            }
+          }
         }
       }
     }

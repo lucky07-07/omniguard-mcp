@@ -16,9 +16,9 @@
       },
       "contract": null,
       "baseline_alerts": 0,
-      "baseline_sweep_ms": 1.938,
+      "baseline_sweep_ms": 2.568,
       "baseline_check_ms": {
-        "id_continuity": 0.591
+        "id_continuity": 0.803
       },
       "checks": [
         "id_continuity"
@@ -33,9 +33,9 @@
       },
       "contract": null,
       "baseline_alerts": 0,
-      "baseline_sweep_ms": 5.872,
+      "baseline_sweep_ms": 12.285,
       "baseline_check_ms": {
-        "hash_chain": 3.746
+        "hash_chain": 9.424
       },
       "checks": [
         "hash_chain"
@@ -50,18 +50,20 @@
       },
       "contract": "0xF2E246BB76DF876Cef8b38ae84130F4F55De395b",
       "baseline_alerts": 0,
-      "baseline_sweep_ms": 2582.398,
+      "baseline_sweep_ms": 6453.344,
       "baseline_check_ms": {
-        "hash_chain": 3.66,
-        "merkle_roots": 0.361,
-        "chain_anchors": 483.342,
-        "manifest_drift": 2093.506
+        "hash_chain": 4.939,
+        "merkle_roots": 0.469,
+        "chain_anchors": 343.766,
+        "manifest_drift": 4070.344,
+        "model_integrity": 2032.064
       },
       "checks": [
         "hash_chain",
         "merkle_roots",
         "chain_anchors",
-        "manifest_drift"
+        "manifest_drift",
+        "model_integrity"
       ]
     }
   },
@@ -75,9 +77,9 @@
       "trials": 5,
       "detection_rate_pct": 0.0,
       "mechanism": "-",
-      "sweep_ms_mean": 2.02,
+      "sweep_ms_mean": 2.67,
       "check_ms_mean": {
-        "id_continuity": 0.61
+        "id_continuity": 0.8
       },
       "example_tamper": "id=64: decision DENY->ALLOW, triggered_rules scrubbed"
     },
@@ -90,9 +92,9 @@
       "trials": 5,
       "detection_rate_pct": 100.0,
       "mechanism": "SEQUENCE_GAP",
-      "sweep_ms_mean": 2.1,
+      "sweep_ms_mean": 2.82,
       "check_ms_mean": {
-        "id_continuity": 0.64
+        "id_continuity": 0.93
       },
       "example_tamper": "deleted interior id=23"
     },
@@ -105,9 +107,9 @@
       "trials": 5,
       "detection_rate_pct": 0.0,
       "mechanism": "-",
-      "sweep_ms_mean": 2.07,
+      "sweep_ms_mean": 5.1,
       "check_ms_mean": {
-        "id_continuity": 0.59
+        "id_continuity": 1.54
       },
       "example_tamper": "rolled back id > 92 (16 rows)"
     },
@@ -120,9 +122,9 @@
       "trials": 5,
       "detection_rate_pct": 0.0,
       "mechanism": "-",
-      "sweep_ms_mean": 2.05,
+      "sweep_ms_mean": 2.54,
       "check_ms_mean": {
-        "id_continuity": 0.59
+        "id_continuity": 0.8
       },
       "example_tamper": "swapped payloads of id=24 and id=43"
     },
@@ -135,9 +137,9 @@
       "trials": 5,
       "detection_rate_pct": 0.0,
       "mechanism": "-",
-      "sweep_ms_mean": 2.15,
+      "sweep_ms_mean": 3.03,
       "check_ms_mean": {
-        "id_continuity": 0.74
+        "id_continuity": 0.82
       },
       "example_tamper": "modified id=4 and recomputed hash chain + local Merkle roots (chain anchor untouched)"
     },
@@ -150,7 +152,7 @@
       "trials": 5,
       "detection_rate_pct": 100.0,
       "mechanism": "GATEWAY_PIN_MISMATCH (tools/list stripped)",
-      "sweep_ms_mean": 0.86,
+      "sweep_ms_mean": 1.1,
       "check_ms_mean": {},
       "example_tamper": "downstream tool definition mutated"
     },
@@ -163,11 +165,26 @@
       "trials": 5,
       "detection_rate_pct": 0.0,
       "mechanism": "-",
-      "sweep_ms_mean": 2.05,
+      "sweep_ms_mean": 2.76,
       "check_ms_mean": {
-        "id_continuity": 0.6
+        "id_continuity": 0.84
       },
       "example_tamper": "read_file description poisoned; gateway pin + registry rewritten to the new digest"
+    },
+    {
+      "scenario": "S7",
+      "description": "ML model/tokenizer tampering (insider also rewrites model manifest)",
+      "regime": "R1",
+      "detected": false,
+      "detected_trials": 0,
+      "trials": 5,
+      "detection_rate_pct": 0.0,
+      "mechanism": "-",
+      "sweep_ms_mean": 3.44,
+      "check_ms_mean": {
+        "id_continuity": 1.28
+      },
+      "example_tamper": "tokenizer.json: tokenizer vocabulary entry remapped; gateway model manifest rewritten to the new digest"
     },
     {
       "scenario": "S1",
@@ -178,9 +195,9 @@
       "trials": 5,
       "detection_rate_pct": 100.0,
       "mechanism": "HASH_MISMATCH",
-      "sweep_ms_mean": 5.52,
+      "sweep_ms_mean": 7.47,
       "check_ms_mean": {
-        "hash_chain": 3.72
+        "hash_chain": 5.34
       },
       "example_tamper": "seq_num=59: decision DENY->ALLOW, triggered_rules scrubbed"
     },
@@ -193,9 +210,9 @@
       "trials": 5,
       "detection_rate_pct": 100.0,
       "mechanism": "CHAIN_BREAK, SEQUENCE_GAP",
-      "sweep_ms_mean": 5.44,
+      "sweep_ms_mean": 7.48,
       "check_ms_mean": {
-        "hash_chain": 3.7
+        "hash_chain": 5.53
       },
       "example_tamper": "deleted interior seq_num=101"
     },
@@ -208,9 +225,9 @@
       "trials": 5,
       "detection_rate_pct": 0.0,
       "mechanism": "-",
-      "sweep_ms_mean": 5.07,
+      "sweep_ms_mean": 8.61,
       "check_ms_mean": {
-        "hash_chain": 3.26
+        "hash_chain": 6.12
       },
       "example_tamper": "rolled back seq_num > 92 (16 rows)"
     },
@@ -223,9 +240,9 @@
       "trials": 5,
       "detection_rate_pct": 100.0,
       "mechanism": "HASH_MISMATCH",
-      "sweep_ms_mean": 5.53,
+      "sweep_ms_mean": 7.7,
       "check_ms_mean": {
-        "hash_chain": 3.76
+        "hash_chain": 5.61
       },
       "example_tamper": "swapped payloads of seq_num=23 and seq_num=41"
     },
@@ -238,9 +255,9 @@
       "trials": 5,
       "detection_rate_pct": 0.0,
       "mechanism": "-",
-      "sweep_ms_mean": 5.59,
+      "sweep_ms_mean": 7.24,
       "check_ms_mean": {
-        "hash_chain": 3.68
+        "hash_chain": 5.18
       },
       "example_tamper": "modified seq_num=64 and recomputed hash chain + local Merkle roots (chain anchor untouched)"
     },
@@ -253,7 +270,7 @@
       "trials": 5,
       "detection_rate_pct": 100.0,
       "mechanism": "GATEWAY_PIN_MISMATCH (tools/list stripped)",
-      "sweep_ms_mean": 0.86,
+      "sweep_ms_mean": 0.98,
       "check_ms_mean": {},
       "example_tamper": "downstream tool definition mutated"
     },
@@ -266,11 +283,26 @@
       "trials": 5,
       "detection_rate_pct": 0.0,
       "mechanism": "-",
-      "sweep_ms_mean": 5.98,
+      "sweep_ms_mean": 8.3,
       "check_ms_mean": {
-        "hash_chain": 4.24
+        "hash_chain": 6.11
       },
       "example_tamper": "read_file description poisoned; gateway pin + registry rewritten to the new digest"
+    },
+    {
+      "scenario": "S7",
+      "description": "ML model/tokenizer tampering (insider also rewrites model manifest)",
+      "regime": "R2",
+      "detected": false,
+      "detected_trials": 0,
+      "trials": 5,
+      "detection_rate_pct": 0.0,
+      "mechanism": "-",
+      "sweep_ms_mean": 9.15,
+      "check_ms_mean": {
+        "hash_chain": 6.56
+      },
+      "example_tamper": "tokenizer.json: tokenizer vocabulary entry remapped; gateway model manifest rewritten to the new digest"
     },
     {
       "scenario": "S1",
@@ -281,12 +313,13 @@
       "trials": 5,
       "detection_rate_pct": 100.0,
       "mechanism": "ANCHOR_RECORDS_MISMATCH, HASH_MISMATCH, MERKLE_ROOT_MISMATCH",
-      "sweep_ms_mean": 2637.69,
+      "sweep_ms_mean": 5069.1,
       "check_ms_mean": {
-        "hash_chain": 4.06,
-        "merkle_roots": 0.45,
-        "chain_anchors": 414.38,
-        "manifest_drift": 2216.68
+        "hash_chain": 5.53,
+        "merkle_roots": 0.55,
+        "chain_anchors": 359.83,
+        "manifest_drift": 2654.35,
+        "model_integrity": 2046.6
       },
       "example_tamper": "seq_num=38: decision DENY->ALLOW, triggered_rules scrubbed"
     },
@@ -299,12 +332,13 @@
       "trials": 5,
       "detection_rate_pct": 100.0,
       "mechanism": "ANCHORED_RECORDS_MISSING, CHAIN_BREAK, MERKLE_BATCH_INCOMPLETE, SEQUENCE_GAP",
-      "sweep_ms_mean": 2560.37,
+      "sweep_ms_mean": 5420.52,
       "check_ms_mean": {
-        "hash_chain": 3.69,
-        "merkle_roots": 0.35,
-        "chain_anchors": 451.77,
-        "manifest_drift": 2102.84
+        "hash_chain": 5.9,
+        "merkle_roots": 0.5,
+        "chain_anchors": 364.53,
+        "manifest_drift": 2790.26,
+        "model_integrity": 2257.27
       },
       "example_tamper": "deleted interior seq_num=39"
     },
@@ -317,12 +351,13 @@
       "trials": 5,
       "detection_rate_pct": 100.0,
       "mechanism": "ANCHORED_BATCH_MISSING, TAIL_TRUNCATION",
-      "sweep_ms_mean": 2589.0,
+      "sweep_ms_mean": 5307.12,
       "check_ms_mean": {
-        "hash_chain": 3.2,
-        "merkle_roots": 0.3,
-        "chain_anchors": 460.5,
-        "manifest_drift": 2123.26
+        "hash_chain": 4.59,
+        "merkle_roots": 0.41,
+        "chain_anchors": 289.76,
+        "manifest_drift": 2962.4,
+        "model_integrity": 2047.67
       },
       "example_tamper": "rolled back seq_num > 92 (16 rows)"
     },
@@ -335,12 +370,13 @@
       "trials": 5,
       "detection_rate_pct": 100.0,
       "mechanism": "ANCHOR_RECORDS_MISMATCH, HASH_MISMATCH, MERKLE_ROOT_MISMATCH",
-      "sweep_ms_mean": 2503.56,
+      "sweep_ms_mean": 5260.8,
       "check_ms_mean": {
-        "hash_chain": 3.71,
-        "merkle_roots": 0.38,
-        "chain_anchors": 396.0,
-        "manifest_drift": 2101.68
+        "hash_chain": 4.78,
+        "merkle_roots": 0.49,
+        "chain_anchors": 348.48,
+        "manifest_drift": 2770.63,
+        "model_integrity": 2134.27
       },
       "example_tamper": "swapped payloads of seq_num=72 and seq_num=79"
     },
@@ -353,12 +389,13 @@
       "trials": 5,
       "detection_rate_pct": 100.0,
       "mechanism": "ANCHOR_RECORDS_MISMATCH, ANCHOR_ROOT_MISMATCH",
-      "sweep_ms_mean": 2543.36,
+      "sweep_ms_mean": 5380.28,
       "check_ms_mean": {
-        "hash_chain": 3.88,
-        "merkle_roots": 0.38,
-        "chain_anchors": 428.56,
-        "manifest_drift": 2108.8
+        "hash_chain": 5.42,
+        "merkle_roots": 0.5,
+        "chain_anchors": 340.52,
+        "manifest_drift": 2964.31,
+        "model_integrity": 2067.43
       },
       "example_tamper": "modified seq_num=6 and recomputed hash chain + local Merkle roots (chain anchor untouched)"
     },
@@ -384,14 +421,34 @@
       "trials": 5,
       "detection_rate_pct": 100.0,
       "mechanism": "MANIFEST_DRIFT, REGISTRY_PIN_REWRITTEN",
-      "sweep_ms_mean": 2564.04,
+      "sweep_ms_mean": 5207.95,
       "check_ms_mean": {
-        "hash_chain": 3.74,
-        "merkle_roots": 0.38,
-        "chain_anchors": 449.58,
-        "manifest_drift": 2108.61
+        "hash_chain": 4.78,
+        "merkle_roots": 0.46,
+        "chain_anchors": 348.74,
+        "manifest_drift": 2773.19,
+        "model_integrity": 2078.66
       },
       "example_tamper": "read_file description poisoned; gateway pin + registry rewritten to the new digest"
+    },
+    {
+      "scenario": "S7",
+      "description": "ML model/tokenizer tampering (insider also rewrites model manifest)",
+      "regime": "R3",
+      "detected": true,
+      "detected_trials": 5,
+      "trials": 5,
+      "detection_rate_pct": 100.0,
+      "mechanism": "MODEL_FILE_TAMPERED",
+      "sweep_ms_mean": 4894.58,
+      "check_ms_mean": {
+        "hash_chain": 4.9,
+        "merkle_roots": 0.43,
+        "chain_anchors": 366.83,
+        "manifest_drift": 2510.84,
+        "model_integrity": 2009.61
+      },
+      "example_tamper": "tokenizer.json: tokenizer vocabulary entry remapped; gateway model manifest rewritten to the new digest"
     }
   ]
 }

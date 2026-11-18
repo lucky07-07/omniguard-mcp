@@ -123,10 +123,33 @@ def reservoir(rows: Iterator[tuple[str, int]], k: int, part: str, seed: int) -> 
     return sample, counts
 
 
+def _metrics(tp: int, fp: int, tn: int, fn: int) -> dict[str, Any]:
+    n = tp + fp + tn + fn
+    prec = tp / (tp + fp) if tp + fp else 0.0
+    rec = tp / (tp + fn) if tp + fn else 0.0
+    return {
+        "tp": tp, "fp": fp, "tn": tn, "fn": fn,
+        "accuracy": round((tp + tn) / n, 4) if n else 0.0,
+        "precision": round(prec, 4),
+        "recall_tpr": round(rec, 4),
+        "f1": round(2 * prec * rec / (prec + rec), 4) if prec + rec else 0.0,
+        "fpr": round(fp / (fp + tn), 4) if fp + tn else 0.0,
+        "fnr": round(fn / (fn + tp), 4) if fn + tp else 0.0,
+    }
+
+
+def _pct(xs: list[float], q: float) -> float:
+    return round(sorted(xs)[int(q * (len(xs) - 1))], 4) if xs else 0.0
+
+
 def evaluate(engine: SecurityEngine, s: Stream, sample: list[tuple[str, int]]) -> dict[str, Any]:
-    tp = fp = tn = fn = 0
-    lat: list[float] = []
-    fns, fps = [], []
+    """One pass, two engines: the deterministic decision is the verdict before the hybrid stage
+    (the ML stage only ever runs on payloads the deterministic engine let through)."""
+    cm = {"deterministic": [0, 0, 0, 0], "hybrid": [0, 0, 0, 0]}  # tp fp tn fn
+    det_ms, ml_ms, total_ms = [], [], []
+    routed = 0
+    fns = {"deterministic": [], "hybrid": []}
+    fps = {"deterministic": [], "hybrid": []}
     rule_hits: dict[str, int] = {}
     for i, (text, label) in enumerate(sample):
         env = s.wrap(i, text)
@@ -137,40 +160,43 @@ def evaluate(engine: SecurityEngine, s: Stream, sample: list[tuple[str, int]]) -
         else:
             out = "\n".join(c["text"] for c in env["result"]["content"] if c["type"] == "text")
             v = engine.inspect_egress(env["_omniguard_source_tool"], out, set())
-        lat.append((time.perf_counter() - t0) * 1000)
-        pred = int(v.decision == Decision.DENY)
-        if pred and label:
-            tp += 1
-        elif pred and not label:
-            fp += 1
-            if len(fps) < 10:
-                fps.append({"text": text[:240], "rules": v.rule_ids, "risk": v.risk_score})
-        elif not pred and label:
-            fn += 1
-            if len(fns) < 15:
-                fns.append({"text": text[:240], "rules": v.rule_ids, "risk": v.risk_score})
-        else:
-            tn += 1
-        if pred:
+        total = (time.perf_counter() - t0) * 1000
+        ml = v.stage_ms.get("ml_tokenize_ms", 0.0) + v.stage_ms.get("ml_infer_ms", 0.0)
+        total_ms.append(total)
+        det_ms.append(total - ml)
+        if v.inspection_path == "hybrid_ml":
+            routed += 1
+            ml_ms.append(ml)
+        hyb = v.decision == Decision.DENY
+        det = hyb and "ML_PROMPT_INJECTION" not in v.rule_ids
+        for name, pred in (("deterministic", det), ("hybrid", hyb)):
+            idx = 0 if (pred and label) else 1 if pred else 3 if label else 2
+            cm[name][idx] += 1
+            ex = {"text": text[:240], "rules": v.rule_ids, "ml_score_milli": v.ml_score_milli}
+            if idx == 1 and len(fps[name]) < 10:
+                fps[name].append(ex)
+            if idx == 3 and len(fns[name]) < 15:
+                fns[name].append(ex)
+        if hyb:
             for r in v.rule_ids:
                 rule_hits[r] = rule_hits.get(r, 0) + 1
-    n = tp + fp + tn + fn
-    prec = tp / (tp + fp) if tp + fp else 0.0
-    rec = tp / (tp + fn) if tp + fn else 0.0
+    n = len(sample)
+    pos = sum(l for _, l in sample)
     return {
-        "samples": n, "positives": tp + fn, "negatives": tn + fp,
-        "tp": tp, "fp": fp, "tn": tn, "fn": fn,
-        "accuracy": round((tp + tn) / n, 4) if n else 0.0,
-        "precision": round(prec, 4),
-        "recall_tpr": round(rec, 4),
-        "f1": round(2 * prec * rec / (prec + rec), 4) if prec + rec else 0.0,
-        "fpr": round(fp / (fp + tn), 4) if fp + tn else 0.0,
-        "fnr": round(fn / (fn + tp), 4) if fn + tp else 0.0,
-        "latency_ms_mean": round(statistics.fmean(lat), 4) if lat else 0.0,
-        "latency_ms_p95": round(sorted(lat)[int(0.95 * (len(lat) - 1))], 4) if lat else 0.0,
+        "samples": n, "positives": pos, "negatives": n - pos, "routed_to_ml": routed,
+        "deterministic": {**_metrics(*cm["deterministic"]), "false_negative_examples": fns["deterministic"],
+                          "false_positive_examples": fps["deterministic"]},
+        "hybrid": {**_metrics(*cm["hybrid"]), "false_negative_examples": fns["hybrid"],
+                   "false_positive_examples": fps["hybrid"]},
+        "latency_ms": {
+            "deterministic_mean": round(statistics.fmean(det_ms), 4) if det_ms else 0.0,
+            "deterministic_p95": _pct(det_ms, 0.95),
+            "ml_mean_when_routed": round(statistics.fmean(ml_ms), 4) if ml_ms else 0.0,
+            "ml_p95_when_routed": _pct(ml_ms, 0.95),
+            "hybrid_total_mean": round(statistics.fmean(total_ms), 4) if total_ms else 0.0,
+            "hybrid_total_p95": _pct(total_ms, 0.95),
+        },
         "top_rules_on_detections": dict(sorted(rule_hits.items(), key=lambda kv: -kv[1])[:8]),
-        "false_negative_examples": fns,
-        "false_positive_examples": fps,
     }
 
 
@@ -188,17 +214,32 @@ def offline_sanity(engine: SecurityEngine) -> dict[str, Any]:
     return {"sanity_cases": len(cases), "sanity_correct": ok}
 
 
+CONTAMINATED = {"jackhhao/jailbreak-classification": "listed in the classifier's published training data"}
+
+
 def run(max_samples: int = 500, seed: int = 13, part: str = "eval", out_dir: Path = RESULTS_DIR,
-        streams: list[str] | None = None) -> dict[str, Any]:
+        streams: list[str] | None = None, ml: Any = "auto") -> dict[str, Any]:
     warnings.filterwarnings("ignore")
     os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
-    engine = SecurityEngine(tool_meta=ToolIntegrityRegistry.load().tools)
+    from omniguard.agents.gateway_agent import resolve_ml
+
+    clf = resolve_ml(ml)
+    engine = SecurityEngine(tool_meta=ToolIntegrityRegistry.load().tools, ml=clf)
+    if clf is not None:  # warm-up so the first timed sample does not pay CUDA initialisation
+        for _ in range(3):
+            clf.score("warm-up text for the classifier, long enough to be routed to the model.")
+    mm = None if clf is None else {"id": clf.manifest["model_id"], "revision": clf.manifest["revision"],
+                                   "sha16": clf.sha16, "provider": clf.provider}
     res: dict[str, Any] = {
-        "title": "Deterministic Engine Detection Metrics - External Validation",
+        "title": "Detection Metrics - External Validation: Deterministic-only vs Hybrid (Deterministic + pinned ML)",
         "protocol": {"max_samples_per_stream": max_samples, "seed": seed, "partition": part,
                      "partitioning": "sha256(text) % 5 == 0 -> dev (20%), else eval (80%)",
                      "positive_prediction": "engine decision == DENY (ABAC excluded)",
-                     "training": "none - deterministic rules only"},
+                     "deterministic": "rules only, frozen before the eval run",
+                     "hybrid": "deterministic + ONNX classifier on routed free text; thresholds calibrated on dev "
+                               "(results/ml_calibration.json) and frozen before the eval run",
+                     "ml_thresholds_milli": {"clean": engine.ml_thr_clean, "tainted_untrusted": engine.ml_thr_untrusted},
+                     "ml_model": mm, "contaminated_streams": CONTAMINATED},
         "streams": {},
     }
     for s in STREAMS:
@@ -214,10 +255,13 @@ def run(max_samples: int = 500, seed: int = 13, part: str = "eval", out_dir: Pat
             continue
         m = evaluate(engine, s, sample)
         m.update({"dataset": s.dataset, "splits": s.splits, "direction": s.direction, "domain": s.domain,
-                  "rows_streamed": counts, "stream_seconds": round(time.perf_counter() - t0, 2), "status": "ok"})
+                  "contaminated": s.dataset in CONTAMINATED, "rows_streamed": counts,
+                  "stream_seconds": round(time.perf_counter() - t0, 2), "status": "ok"})
         res["streams"][s.name] = m
-        print(f"[external] {s.name}: n={m['samples']} P={m['precision']:.3f} R={m['recall_tpr']:.3f} "
-              f"F1={m['f1']:.3f} FPR={m['fpr']:.3f} ({m['latency_ms_mean']:.3f} ms)")
+        d, h = m["deterministic"], m["hybrid"]
+        print(f"[external] {s.name}: n={m['samples']} routed={m['routed_to_ml']} | det P={d['precision']:.3f} "
+              f"R={d['recall_tpr']:.3f} F1={d['f1']:.3f} | hybrid P={h['precision']:.3f} R={h['recall_tpr']:.3f} "
+              f"F1={h['f1']:.3f} FPR={h['fpr']:.3f}")
     suffix = "" if part == "eval" else f"_{part}"
     save_json(out_dir / f"external_dataset_eval{suffix}.json", res)
     write_md(res, out_dir / f"external_dataset_eval{suffix}.md")
@@ -226,48 +270,54 @@ def run(max_samples: int = 500, seed: int = 13, part: str = "eval", out_dir: Pat
 
 def write_md(res: dict[str, Any], path: Path) -> None:
     ok = {k: v for k, v in res["streams"].items() if v.get("status") == "ok"}
-    table = tabulate(
-        [[k, v["dataset"], v["direction"], v["samples"], v["positives"], f"{v['accuracy']:.3f}", f"{v['precision']:.3f}",
-          f"{v['recall_tpr']:.3f}", f"{v['f1']:.3f}", f"{v['fpr']:.3f}", f"{v['fnr']:.3f}",
-          f"{v['latency_ms_mean']:.3f}", f"{v['latency_ms_p95']:.3f}"] for k, v in ok.items()],
-        headers=["Stream", "Dataset", "Dir", "n", "Pos", "Acc", "Prec", "Recall (TPR)", "F1", "FPR", "FNR",
-                 "Mean ms", "p95 ms"], tablefmt="github")
-    conf = tabulate([[k, v["tp"], v["fp"], v["tn"], v["fn"]] for k, v in ok.items()],
-                    headers=["Stream", "TP", "FP", "TN", "FN"], tablefmt="github")
+    rows = []
+    for k, v in ok.items():
+        name = k + (" (contaminated)" if v["contaminated"] else "")
+        for eng in ("deterministic", "hybrid"):
+            m = v[eng]
+            rows.append([name if eng == "deterministic" else "", eng, v["samples"], v["positives"],
+                         f"{m['accuracy']:.3f}", f"{m['precision']:.3f}", f"{m['recall_tpr']:.3f}", f"{m['f1']:.3f}",
+                         f"{m['fpr']:.3f}", f"{m['fnr']:.3f}", m["tp"], m["fp"], m["tn"], m["fn"]])
+    table = tabulate(rows, headers=["Stream", "Engine", "n", "Pos", "Acc", "Prec", "Recall", "F1", "FPR", "FNR",
+                                    "TP", "FP", "TN", "FN"], tablefmt="github")
+    lat = tabulate([[k, v["routed_to_ml"], f"{v['latency_ms']['deterministic_mean']:.3f}",
+                     f"{v['latency_ms']['deterministic_p95']:.3f}", f"{v['latency_ms']['ml_mean_when_routed']:.2f}",
+                     f"{v['latency_ms']['ml_p95_when_routed']:.2f}", f"{v['latency_ms']['hybrid_total_mean']:.2f}"]
+                    for k, v in ok.items()],
+                   headers=["Stream", "Routed to ML", "Det. mean ms", "Det. p95 ms", "ML mean ms (routed)",
+                            "ML p95 ms (routed)", "Hybrid mean ms (all)"], tablefmt="github")
     skipped = [f"- `{k}`: {v['status']}" for k, v in res["streams"].items() if v.get("status") != "ok"]
     fn_md = []
     for k, v in ok.items():
-        if v["false_negative_examples"]:
+        ex = v["hybrid"]["false_negative_examples"]
+        if ex:
             fn_md.append(f"### {k}\n")
-            for e in v["false_negative_examples"][:6]:
+            for e in ex[:6]:
                 t = e["text"].replace("\n", " ").replace("|", "\\|")
-                fn_md.append(f"- risk {e['risk']:.2f}, rules {e['rules'] or '[]'}: `{t[:160]}`")
+                fn_md.append(f"- ml {e['ml_score_milli']}, rules {e['rules'] or '[]'}: `{t[:160]}`")
             fn_md.append("")
     p = res["protocol"]
-    md = f"""# {res['title']}
-
-No model is trained or executed. Samples are streamed from Hugging Face (`streaming=True`), wrapped into MCP
-`tools/call` request envelopes (ingress) or tool-result envelopes (egress), and inspected by the deterministic
-engine. Partition: **{p['partition']}** ({p['partitioning']}); up to {p['max_samples_per_stream']} rows per stream
-by seeded reservoir sampling (seed {p['seed']}). Positive prediction = {p['positive_prediction']}.
-
-## Detection metrics
-
-{table}
-
-## Confusion counts
-
-{conf}
-
-{chr(10).join(skipped)}
-
-## False negatives (documented limitation)
-
-Deterministic signatures catch explicit override phrasing, chat-template tokens, encoded payloads and
-structural injection, but miss paraphrased or purely semantic prompt injections. A sample of misses:
-
-{chr(10).join(fn_md)}
-"""
+    mm = p["ml_model"] or {"id": "n/a", "revision": "n/a", "sha16": "n/a", "provider": "n/a"}
+    thr = p["ml_thresholds_milli"]
+    md = (
+        f"# {res['title']}\n\n"
+        "Samples are streamed from Hugging Face (`streaming=True`), wrapped into MCP `tools/call` request envelopes "
+        "(ingress) or tool-result envelopes (egress), and inspected once. The deterministic decision is the verdict "
+        "*before* the hybrid stage, so both engines are scored on identical inputs.\n"
+        f"Partition: **{p['partition']}** ({p['partitioning']}); up to {p['max_samples_per_stream']} rows per stream "
+        f"by seeded reservoir sampling (seed {p['seed']}).\n\n"
+        f"* Model: `{mm['id']}` @ `{mm['revision'][:8]}` (sha256 `{mm['sha16']}...`), execution provider **{mm['provider']}**.\n"
+        f"* Frozen ML thresholds (milli): clean **{thr['clean']}**; tainted-untrusted sessions and untrusted tool output "
+        f"**{thr['tainted_untrusted']}**.\n"
+        "* Routing: only payloads that pass every deterministic check and carry free text longer than 40 characters.\n"
+        "* **Contaminated:** `jackhhao/jailbreak-classification` is in the classifier's published training data, so its "
+        "hybrid numbers measure memorisation, not generalisation. Do not use them as evidence.\n\n"
+        f"## Detection metrics (deterministic-only vs hybrid)\n\n{table}\n\n"
+        f"## Latency per inspection (ms)\n\n{lat}\n\n"
+        + "\n".join(skipped)
+        + "\n\n## Remaining hybrid false negatives (documented limitation)\n\n"
+        + "\n".join(fn_md) + "\n"
+    )
     path.write_text(md, encoding="utf-8")
 
 
@@ -278,8 +328,9 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--partition", choices=["eval", "dev"], default="eval")
     ap.add_argument("--streams", nargs="*", default=None)
     ap.add_argument("--out", default=str(RESULTS_DIR))
+    ap.add_argument("--deterministic-only", action="store_true")
     a = ap.parse_args(argv)
-    run(a.max_samples, a.seed, a.partition, Path(a.out), a.streams)
+    run(a.max_samples, a.seed, a.partition, Path(a.out), a.streams, ml=False if a.deterministic_only else "auto")
 
 
 if __name__ == "__main__":

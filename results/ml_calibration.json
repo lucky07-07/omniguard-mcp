@@ -1,0 +1,51 @@
+{
+  "partition": "dev (sha256(text) % 5 == 0)",
+  "dataset": "deepset/prompt-injections (train+test, dev rows only)",
+  "excluded": {
+    "jackhhao/jailbreak-classification": "listed in the classifier's training data"
+  },
+  "rows": 125,
+  "positives": 45,
+  "routed_to_ml": 86,
+  "model": {
+    "id": "protectai/deberta-v3-base-prompt-injection-v2",
+    "revision": "90c9989b1a342275dd0d1a95aad283c04e075671",
+    "sha16": "f0ea7f239f765aed",
+    "provider": "cuda"
+  },
+  "targets": {
+    "clean_precision": 0.99,
+    "untrusted_precision": 0.95
+  },
+  "chosen": {
+    "clean": {
+      "threshold_milli": 896,
+      "precision": 1.0,
+      "recall": 0.5333,
+      "tp": 24,
+      "fp": 0,
+      "fn": 21,
+      "plateau": [
+        827,
+        965
+      ]
+    },
+    "tainted_untrusted": {
+      "threshold_milli": 328,
+      "precision": 0.9655,
+      "recall": 0.6222,
+      "tp": 28,
+      "fp": 1,
+      "fn": 17,
+      "plateau": [
+        100,
+        555
+      ]
+    }
+  },
+  "search_range_milli": [
+    100,
+    990
+  ],
+  "rule": "maximise dev recall s.t. precision >= target; ties -> plateau median; untrusted <= clean"
+}

@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "omniguard-mcp"
+version = "0.1.0"
+description = "Tamper-evident security gateway and deterministic information-flow firewall for MCP-based AI agent systems"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+# Deliberately no ML training or inference libraries: the security engine is deterministic.
+dependencies = [
+    "mcp>=1.0",
+    "pydantic>=2.6",
+    "pyyaml>=6.0",
+    "web3>=7.0",
+    "eth-tester>=0.12.0b1",
+    "py-evm>=0.10.1b1",
+    "py-solc-x>=2.0",
+    "datasets>=2.18",
+    "matplotlib>=3.8",
+    "tabulate>=0.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+omniguard-gateway = "omniguard.agents.gateway_agent:main"
+omniguard-watcher = "omniguard.agents.watcher_agent:main"
+omniguard-chain = "omniguard.crypto.chain_node:main"
+
+[tool.setuptools.packages.find]
+include = ["omniguard*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+filterwarnings = ["ignore::DeprecationWarning", "ignore::ResourceWarning",
+                  "ignore::pytest.PytestUnraisableExceptionWarning"]

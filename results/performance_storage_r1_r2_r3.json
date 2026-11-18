@@ -1,0 +1,312 @@
+{
+  "config": {
+    "requests": 500,
+    "batch_size": 16,
+    "seed": 11,
+    "warmup_requests": 30,
+    "chain": "eth-tester/py-evm node over HTTP JSON-RPC",
+    "sqlite": "WAL, synchronous=NORMAL, commit per event"
+  },
+  "regimes": {
+    "R1": {
+      "regime": "R1",
+      "anchoring": "none",
+      "requests": 500,
+      "decisions": {
+        "ALLOW": 276,
+        "DENY": 224
+      },
+      "e2e_latency_ms": {
+        "mean": 0.511,
+        "p50": 0.475,
+        "p95": 0.7213,
+        "p99": 0.8923,
+        "max": 21.7791
+      },
+      "stage_ms_mean_per_request": {
+        "tool_integrity": 0.1293,
+        "security_engine": 0.183,
+        "downstream_tool": 0.0136,
+        "audit_total": 0.1382,
+        "hash_chain": 0.0,
+        "merkle_build_amortized": 0.0,
+        "anchor_tx_amortized": 0.0
+      },
+      "per_batch_ms": {
+        "merkle_build_mean": 0.0,
+        "anchor_tx_mean": 0.0,
+        "anchor_tx_p95": 0.0
+      },
+      "security_engine_ms": {
+        "mean": 0.183,
+        "p50": 0.2035,
+        "p95": 0.3847,
+        "p99": 0.4963,
+        "max": 0.6229
+      },
+      "audit_ms": {
+        "mean": 0.1382,
+        "p50": 0.0844,
+        "p95": 0.1455,
+        "p99": 0.2318,
+        "max": 21.3352
+      },
+      "storage": {
+        "audit_events": 516,
+        "db_bytes": 184320,
+        "bytes_per_event": 357.21,
+        "merkle_proof_bytes": 0,
+        "merkle_batches": 0,
+        "onchain_tx": 0,
+        "onchain_gas_total": 0,
+        "onchain_gas_per_batch": 0,
+        "onchain_gas_per_event": 0.0,
+        "onchain_calldata_bytes_total": 0,
+        "onchain_calldata_bytes_per_event": 0.0
+      },
+      "overhead_vs_R1": {
+        "mean": {
+          "abs_ms": 0.0,
+          "pct": 0.0
+        },
+        "p50": {
+          "abs_ms": 0.0,
+          "pct": 0.0
+        },
+        "p95": {
+          "abs_ms": 0.0,
+          "pct": 0.0
+        },
+        "p99": {
+          "abs_ms": 0.0,
+          "pct": 0.0
+        }
+      }
+    },
+    "R2": {
+      "regime": "R2",
+      "anchoring": "none",
+      "requests": 500,
+      "decisions": {
+        "ALLOW": 276,
+        "DENY": 224
+      },
+      "e2e_latency_ms": {
+        "mean": 0.4767,
+        "p50": 0.4944,
+        "p95": 0.7121,
+        "p99": 0.8543,
+        "max": 0.957
+      },
+      "stage_ms_mean_per_request": {
+        "tool_integrity": 0.1288,
+        "security_engine": 0.1834,
+        "downstream_tool": 0.0138,
+        "audit_total": 0.1046,
+        "hash_chain": 0.01767,
+        "merkle_build_amortized": 0.0,
+        "anchor_tx_amortized": 0.0
+      },
+      "per_batch_ms": {
+        "merkle_build_mean": 0.0,
+        "anchor_tx_mean": 0.0,
+        "anchor_tx_p95": 0.0
+      },
+      "security_engine_ms": {
+        "mean": 0.1834,
+        "p50": 0.2049,
+        "p95": 0.385,
+        "p99": 0.4387,
+        "max": 0.6097
+      },
+      "audit_ms": {
+        "mean": 0.1046,
+        "p50": 0.0978,
+        "p95": 0.1641,
+        "p99": 0.1929,
+        "max": 0.3809
+      },
+      "storage": {
+        "audit_events": 516,
+        "db_bytes": 258048,
+        "bytes_per_event": 500.09,
+        "merkle_proof_bytes": 0,
+        "merkle_batches": 0,
+        "onchain_tx": 0,
+        "onchain_gas_total": 0,
+        "onchain_gas_per_batch": 0,
+        "onchain_gas_per_event": 0.0,
+        "onchain_calldata_bytes_total": 0,
+        "onchain_calldata_bytes_per_event": 0.0
+      },
+      "overhead_vs_R1": {
+        "mean": {
+          "abs_ms": -0.0343,
+          "pct": -6.71
+        },
+        "p50": {
+          "abs_ms": 0.0194,
+          "pct": 4.08
+        },
+        "p95": {
+          "abs_ms": -0.0092,
+          "pct": -1.28
+        },
+        "p99": {
+          "abs_ms": -0.038,
+          "pct": -4.26
+        }
+      }
+    },
+    "R3": {
+      "regime": "R3",
+      "anchoring": "synchronous in request path",
+      "requests": 500,
+      "decisions": {
+        "ALLOW": 276,
+        "DENY": 224
+      },
+      "e2e_latency_ms": {
+        "mean": 8.0374,
+        "p50": 0.5407,
+        "p95": 94.438,
+        "p99": 138.1872,
+        "max": 154.9136
+      },
+      "stage_ms_mean_per_request": {
+        "tool_integrity": 0.1448,
+        "security_engine": 0.2059,
+        "downstream_tool": 0.0169,
+        "audit_total": 7.6158,
+        "hash_chain": 0.01994,
+        "merkle_build_amortized": 0.0305,
+        "anchor_tx_amortized": 7.7168
+      },
+      "per_batch_ms": {
+        "merkle_build_mean": 0.4913,
+        "anchor_tx_mean": 116.921,
+        "anchor_tx_p95": 147.0598
+      },
+      "security_engine_ms": {
+        "mean": 0.2059,
+        "p50": 0.2143,
+        "p95": 0.4242,
+        "p99": 0.5258,
+        "max": 0.656
+      },
+      "audit_ms": {
+        "mean": 7.6158,
+        "p50": 0.1111,
+        "p95": 94.0069,
+        "p99": 137.5595,
+        "max": 154.2481
+      },
+      "storage": {
+        "audit_events": 516,
+        "db_bytes": 487424,
+        "bytes_per_event": 944.62,
+        "merkle_proof_bytes": 200976,
+        "merkle_batches": 33,
+        "onchain_tx": 33,
+        "onchain_gas_total": 3375753,
+        "onchain_gas_per_batch": 102295.5,
+        "onchain_gas_per_event": 6542.2,
+        "onchain_calldata_bytes_total": 4356,
+        "onchain_calldata_bytes_per_event": 8.44
+      },
+      "overhead_vs_R1": {
+        "mean": {
+          "abs_ms": 7.5264,
+          "pct": 1472.88
+        },
+        "p50": {
+          "abs_ms": 0.0657,
+          "pct": 13.83
+        },
+        "p95": {
+          "abs_ms": 93.7167,
+          "pct": 12992.75
+        },
+        "p99": {
+          "abs_ms": 137.2949,
+          "pct": 15386.63
+        }
+      }
+    },
+    "R3-async": {
+      "regime": "R3-async",
+      "anchoring": "async background worker",
+      "requests": 500,
+      "decisions": {
+        "ALLOW": 276,
+        "DENY": 224
+      },
+      "e2e_latency_ms": {
+        "mean": 0.6307,
+        "p50": 0.5471,
+        "p95": 1.269,
+        "p99": 1.9934,
+        "max": 2.2851
+      },
+      "stage_ms_mean_per_request": {
+        "tool_integrity": 0.1364,
+        "security_engine": 0.1938,
+        "downstream_tool": 0.0171,
+        "audit_total": 0.2332,
+        "hash_chain": 0.01883,
+        "merkle_build_amortized": 0.0462,
+        "anchor_tx_amortized": 0.0
+      },
+      "per_batch_ms": {
+        "merkle_build_mean": 0.7448,
+        "anchor_tx_mean": 108.7423,
+        "anchor_tx_p95": 146.2569
+      },
+      "security_engine_ms": {
+        "mean": 0.1938,
+        "p50": 0.209,
+        "p95": 0.4036,
+        "p99": 0.5387,
+        "max": 0.9336
+      },
+      "audit_ms": {
+        "mean": 0.2332,
+        "p50": 0.1109,
+        "p95": 0.8024,
+        "p99": 1.4119,
+        "max": 1.8125
+      },
+      "storage": {
+        "audit_events": 516,
+        "db_bytes": 487424,
+        "bytes_per_event": 944.62,
+        "merkle_proof_bytes": 200976,
+        "merkle_batches": 33,
+        "onchain_tx": 33,
+        "onchain_gas_total": 3375741,
+        "onchain_gas_per_batch": 102295.2,
+        "onchain_gas_per_event": 6542.1,
+        "onchain_calldata_bytes_total": 4356,
+        "onchain_calldata_bytes_per_event": 8.44
+      },
+      "overhead_vs_R1": {
+        "mean": {
+          "abs_ms": 0.1197,
+          "pct": 23.42
+        },
+        "p50": {
+          "abs_ms": 0.0721,
+          "pct": 15.18
+        },
+        "p95": {
+          "abs_ms": 0.5477,
+          "pct": 75.93
+        },
+        "p99": {
+          "abs_ms": 1.1011,
+          "pct": 123.4
+        }
+      }
+    }
+  }
+}

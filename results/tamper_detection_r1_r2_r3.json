@@ -1,0 +1,397 @@
+{
+  "config": {
+    "trials": 5,
+    "workload_requests": 96,
+    "batch_size": 16,
+    "seed": 7,
+    "watcher": "separate OS process, mode=ro DB, own RPC client"
+  },
+  "regimes": {
+    "R1": {
+      "records": 108,
+      "decisions": {
+        "ALLOW": 69,
+        "DENY": 27,
+        "TAINT": 12
+      },
+      "contract": null,
+      "baseline_alerts": 0,
+      "baseline_sweep_ms": 1.938,
+      "baseline_check_ms": {
+        "id_continuity": 0.591
+      },
+      "checks": [
+        "id_continuity"
+      ]
+    },
+    "R2": {
+      "records": 108,
+      "decisions": {
+        "ALLOW": 69,
+        "DENY": 27,
+        "TAINT": 12
+      },
+      "contract": null,
+      "baseline_alerts": 0,
+      "baseline_sweep_ms": 5.872,
+      "baseline_check_ms": {
+        "hash_chain": 3.746
+      },
+      "checks": [
+        "hash_chain"
+      ]
+    },
+    "R3": {
+      "records": 108,
+      "decisions": {
+        "ALLOW": 69,
+        "DENY": 27,
+        "TAINT": 12
+      },
+      "contract": "0xF2E246BB76DF876Cef8b38ae84130F4F55De395b",
+      "baseline_alerts": 0,
+      "baseline_sweep_ms": 2582.398,
+      "baseline_check_ms": {
+        "hash_chain": 3.66,
+        "merkle_roots": 0.361,
+        "chain_anchors": 483.342,
+        "manifest_drift": 2093.506
+      },
+      "checks": [
+        "hash_chain",
+        "merkle_roots",
+        "chain_anchors",
+        "manifest_drift"
+      ]
+    }
+  },
+  "rows": [
+    {
+      "scenario": "S1",
+      "description": "Field modification (DENY->ALLOW, rules scrubbed)",
+      "regime": "R1",
+      "detected": false,
+      "detected_trials": 0,
+      "trials": 5,
+      "detection_rate_pct": 0.0,
+      "mechanism": "-",
+      "sweep_ms_mean": 2.02,
+      "check_ms_mean": {
+        "id_continuity": 0.61
+      },
+      "example_tamper": "id=64: decision DENY->ALLOW, triggered_rules scrubbed"
+    },
+    {
+      "scenario": "S2",
+      "description": "Interior record deletion",
+      "regime": "R1",
+      "detected": true,
+      "detected_trials": 5,
+      "trials": 5,
+      "detection_rate_pct": 100.0,
+      "mechanism": "SEQUENCE_GAP",
+      "sweep_ms_mean": 2.1,
+      "check_ms_mean": {
+        "id_continuity": 0.64
+      },
+      "example_tamper": "deleted interior id=23"
+    },
+    {
+      "scenario": "S3",
+      "description": "Tail truncation / rollback of latest batch",
+      "regime": "R1",
+      "detected": false,
+      "detected_trials": 0,
+      "trials": 5,
+      "detection_rate_pct": 0.0,
+      "mechanism": "-",
+      "sweep_ms_mean": 2.07,
+      "check_ms_mean": {
+        "id_continuity": 0.59
+      },
+      "example_tamper": "rolled back id > 92 (16 rows)"
+    },
+    {
+      "scenario": "S4",
+      "description": "Record reordering / payload swap",
+      "regime": "R1",
+      "detected": false,
+      "detected_trials": 0,
+      "trials": 5,
+      "detection_rate_pct": 0.0,
+      "mechanism": "-",
+      "sweep_ms_mean": 2.05,
+      "check_ms_mean": {
+        "id_continuity": 0.59
+      },
+      "example_tamper": "swapped payloads of id=24 and id=43"
+    },
+    {
+      "scenario": "S5",
+      "description": "Merkle root forgery (chain + local roots recomputed)",
+      "regime": "R1",
+      "detected": false,
+      "detected_trials": 0,
+      "trials": 5,
+      "detection_rate_pct": 0.0,
+      "mechanism": "-",
+      "sweep_ms_mean": 2.15,
+      "check_ms_mean": {
+        "id_continuity": 0.74
+      },
+      "example_tamper": "modified id=4 and recomputed hash chain + local Merkle roots (chain anchor untouched)"
+    },
+    {
+      "scenario": "S6a",
+      "description": "Tool rug-pull (downstream only, pins intact)",
+      "regime": "R1",
+      "detected": true,
+      "detected_trials": 5,
+      "trials": 5,
+      "detection_rate_pct": 100.0,
+      "mechanism": "GATEWAY_PIN_MISMATCH (tools/list stripped)",
+      "sweep_ms_mean": 0.86,
+      "check_ms_mean": {},
+      "example_tamper": "downstream tool definition mutated"
+    },
+    {
+      "scenario": "S6b",
+      "description": "Tool rug-pull (insider also rewrites gateway pins)",
+      "regime": "R1",
+      "detected": false,
+      "detected_trials": 0,
+      "trials": 5,
+      "detection_rate_pct": 0.0,
+      "mechanism": "-",
+      "sweep_ms_mean": 2.05,
+      "check_ms_mean": {
+        "id_continuity": 0.6
+      },
+      "example_tamper": "read_file description poisoned; gateway pin + registry rewritten to the new digest"
+    },
+    {
+      "scenario": "S1",
+      "description": "Field modification (DENY->ALLOW, rules scrubbed)",
+      "regime": "R2",
+      "detected": true,
+      "detected_trials": 5,
+      "trials": 5,
+      "detection_rate_pct": 100.0,
+      "mechanism": "HASH_MISMATCH",
+      "sweep_ms_mean": 5.52,
+      "check_ms_mean": {
+        "hash_chain": 3.72
+      },
+      "example_tamper": "seq_num=59: decision DENY->ALLOW, triggered_rules scrubbed"
+    },
+    {
+      "scenario": "S2",
+      "description": "Interior record deletion",
+      "regime": "R2",
+      "detected": true,
+      "detected_trials": 5,
+      "trials": 5,
+      "detection_rate_pct": 100.0,
+      "mechanism": "CHAIN_BREAK, SEQUENCE_GAP",
+      "sweep_ms_mean": 5.44,
+      "check_ms_mean": {
+        "hash_chain": 3.7
+      },
+      "example_tamper": "deleted interior seq_num=101"
+    },
+    {
+      "scenario": "S3",
+      "description": "Tail truncation / rollback of latest batch",
+      "regime": "R2",
+      "detected": false,
+      "detected_trials": 0,
+      "trials": 5,
+      "detection_rate_pct": 0.0,
+      "mechanism": "-",
+      "sweep_ms_mean": 5.07,
+      "check_ms_mean": {
+        "hash_chain": 3.26
+      },
+      "example_tamper": "rolled back seq_num > 92 (16 rows)"
+    },
+    {
+      "scenario": "S4",
+      "description": "Record reordering / payload swap",
+      "regime": "R2",
+      "detected": true,
+      "detected_trials": 5,
+      "trials": 5,
+      "detection_rate_pct": 100.0,
+      "mechanism": "HASH_MISMATCH",
+      "sweep_ms_mean": 5.53,
+      "check_ms_mean": {
+        "hash_chain": 3.76
+      },
+      "example_tamper": "swapped payloads of seq_num=23 and seq_num=41"
+    },
+    {
+      "scenario": "S5",
+      "description": "Merkle root forgery (chain + local roots recomputed)",
+      "regime": "R2",
+      "detected": false,
+      "detected_trials": 0,
+      "trials": 5,
+      "detection_rate_pct": 0.0,
+      "mechanism": "-",
+      "sweep_ms_mean": 5.59,
+      "check_ms_mean": {
+        "hash_chain": 3.68
+      },
+      "example_tamper": "modified seq_num=64 and recomputed hash chain + local Merkle roots (chain anchor untouched)"
+    },
+    {
+      "scenario": "S6a",
+      "description": "Tool rug-pull (downstream only, pins intact)",
+      "regime": "R2",
+      "detected": true,
+      "detected_trials": 5,
+      "trials": 5,
+      "detection_rate_pct": 100.0,
+      "mechanism": "GATEWAY_PIN_MISMATCH (tools/list stripped)",
+      "sweep_ms_mean": 0.86,
+      "check_ms_mean": {},
+      "example_tamper": "downstream tool definition mutated"
+    },
+    {
+      "scenario": "S6b",
+      "description": "Tool rug-pull (insider also rewrites gateway pins)",
+      "regime": "R2",
+      "detected": false,
+      "detected_trials": 0,
+      "trials": 5,
+      "detection_rate_pct": 0.0,
+      "mechanism": "-",
+      "sweep_ms_mean": 5.98,
+      "check_ms_mean": {
+        "hash_chain": 4.24
+      },
+      "example_tamper": "read_file description poisoned; gateway pin + registry rewritten to the new digest"
+    },
+    {
+      "scenario": "S1",
+      "description": "Field modification (DENY->ALLOW, rules scrubbed)",
+      "regime": "R3",
+      "detected": true,
+      "detected_trials": 5,
+      "trials": 5,
+      "detection_rate_pct": 100.0,
+      "mechanism": "ANCHOR_RECORDS_MISMATCH, HASH_MISMATCH, MERKLE_ROOT_MISMATCH",
+      "sweep_ms_mean": 2637.69,
+      "check_ms_mean": {
+        "hash_chain": 4.06,
+        "merkle_roots": 0.45,
+        "chain_anchors": 414.38,
+        "manifest_drift": 2216.68
+      },
+      "example_tamper": "seq_num=38: decision DENY->ALLOW, triggered_rules scrubbed"
+    },
+    {
+      "scenario": "S2",
+      "description": "Interior record deletion",
+      "regime": "R3",
+      "detected": true,
+      "detected_trials": 5,
+      "trials": 5,
+      "detection_rate_pct": 100.0,
+      "mechanism": "ANCHORED_RECORDS_MISSING, CHAIN_BREAK, MERKLE_BATCH_INCOMPLETE, SEQUENCE_GAP",
+      "sweep_ms_mean": 2560.37,
+      "check_ms_mean": {
+        "hash_chain": 3.69,
+        "merkle_roots": 0.35,
+        "chain_anchors": 451.77,
+        "manifest_drift": 2102.84
+      },
+      "example_tamper": "deleted interior seq_num=39"
+    },
+    {
+      "scenario": "S3",
+      "description": "Tail truncation / rollback of latest batch",
+      "regime": "R3",
+      "detected": true,
+      "detected_trials": 5,
+      "trials": 5,
+      "detection_rate_pct": 100.0,
+      "mechanism": "ANCHORED_BATCH_MISSING, TAIL_TRUNCATION",
+      "sweep_ms_mean": 2589.0,
+      "check_ms_mean": {
+        "hash_chain": 3.2,
+        "merkle_roots": 0.3,
+        "chain_anchors": 460.5,
+        "manifest_drift": 2123.26
+      },
+      "example_tamper": "rolled back seq_num > 92 (16 rows)"
+    },
+    {
+      "scenario": "S4",
+      "description": "Record reordering / payload swap",
+      "regime": "R3",
+      "detected": true,
+      "detected_trials": 5,
+      "trials": 5,
+      "detection_rate_pct": 100.0,
+      "mechanism": "ANCHOR_RECORDS_MISMATCH, HASH_MISMATCH, MERKLE_ROOT_MISMATCH",
+      "sweep_ms_mean": 2503.56,
+      "check_ms_mean": {
+        "hash_chain": 3.71,
+        "merkle_roots": 0.38,
+        "chain_anchors": 396.0,
+        "manifest_drift": 2101.68
+      },
+      "example_tamper": "swapped payloads of seq_num=72 and seq_num=79"
+    },
+    {
+      "scenario": "S5",
+      "description": "Merkle root forgery (chain + local roots recomputed)",
+      "regime": "R3",
+      "detected": true,
+      "detected_trials": 5,
+      "trials": 5,
+      "detection_rate_pct": 100.0,
+      "mechanism": "ANCHOR_RECORDS_MISMATCH, ANCHOR_ROOT_MISMATCH",
+      "sweep_ms_mean": 2543.36,
+      "check_ms_mean": {
+        "hash_chain": 3.88,
+        "merkle_roots": 0.38,
+        "chain_anchors": 428.56,
+        "manifest_drift": 2108.8
+      },
+      "example_tamper": "modified seq_num=6 and recomputed hash chain + local Merkle roots (chain anchor untouched)"
+    },
+    {
+      "scenario": "S6a",
+      "description": "Tool rug-pull (downstream only, pins intact)",
+      "regime": "R3",
+      "detected": true,
+      "detected_trials": 5,
+      "trials": 5,
+      "detection_rate_pct": 100.0,
+      "mechanism": "GATEWAY_PIN_MISMATCH (tools/list stripped)",
+      "sweep_ms_mean": 0.89,
+      "check_ms_mean": {},
+      "example_tamper": "downstream tool definition mutated"
+    },
+    {
+      "scenario": "S6b",
+      "description": "Tool rug-pull (insider also rewrites gateway pins)",
+      "regime": "R3",
+      "detected": true,
+      "detected_trials": 5,
+      "trials": 5,
+      "detection_rate_pct": 100.0,
+      "mechanism": "MANIFEST_DRIFT, REGISTRY_PIN_REWRITTEN",
+      "sweep_ms_mean": 2564.04,
+      "check_ms_mean": {
+        "hash_chain": 3.74,
+        "merkle_roots": 0.38,
+        "chain_anchors": 449.58,
+        "manifest_drift": 2108.61
+      },
+      "example_tamper": "read_file description poisoned; gateway pin + registry rewritten to the new digest"
+    }
+  ]
+}

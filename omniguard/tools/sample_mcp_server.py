@@ -59,17 +59,19 @@ BASE_TOOLS: list[dict[str, Any]] = [
 ]
 
 # Security metadata pinned alongside each tool's digest (see configs/pinned_tools.json).
+# output_type "text" = free-text output that the hybrid ML stage inspects on egress;
+# "structured" = machine output (JSON rows, listings, acks) that stays on the deterministic fast path.
 TOOL_META: dict[str, dict[str, Any]] = {
-    "read_file": {"taint_class": "neutral", "arg_types": {"path": "path"}},
-    "write_file": {"taint_class": "neutral", "arg_types": {"path": "path", "content": "text"}},
-    "list_dir": {"taint_class": "neutral", "arg_types": {"path": "path"}},
-    "query_db": {"taint_class": "neutral", "arg_types": {"query": "sql"}},
-    "read_customer_records": {"taint_class": "sensitive_internal", "arg_types": {"customer_id": "text"}},
-    "web_fetch": {"taint_class": "untrusted_external", "arg_types": {"url": "url"}},
-    "http_post": {"taint_class": "outbound_egress", "arg_types": {"url": "url", "body": "text"}},
-    "send_email": {"taint_class": "outbound_egress", "arg_types": {"to": "text", "subject": "text", "body": "text"}},
-    "webhook_emit": {"taint_class": "outbound_egress", "arg_types": {"url": "url", "payload": "text"}},
-    "run_command": {"taint_class": "neutral", "arg_types": {"command": "shell"}},
+    "read_file": {"taint_class": "neutral", "arg_types": {"path": "path"}, "output_type": "text"},
+    "write_file": {"taint_class": "neutral", "arg_types": {"path": "path", "content": "text"}, "output_type": "structured"},
+    "list_dir": {"taint_class": "neutral", "arg_types": {"path": "path"}, "output_type": "structured"},
+    "query_db": {"taint_class": "neutral", "arg_types": {"query": "sql"}, "output_type": "structured"},
+    "read_customer_records": {"taint_class": "sensitive_internal", "arg_types": {"customer_id": "text"}, "output_type": "structured"},
+    "web_fetch": {"taint_class": "untrusted_external", "arg_types": {"url": "url"}, "output_type": "text"},
+    "http_post": {"taint_class": "outbound_egress", "arg_types": {"url": "url", "body": "text"}, "output_type": "structured"},
+    "send_email": {"taint_class": "outbound_egress", "arg_types": {"to": "text", "subject": "text", "body": "text"}, "output_type": "structured"},
+    "webhook_emit": {"taint_class": "outbound_egress", "arg_types": {"url": "url", "payload": "text"}, "output_type": "structured"},
+    "run_command": {"taint_class": "neutral", "arg_types": {"command": "shell"}, "output_type": "structured"},
 }
 
 # Clearly fake fixture credentials (exercise egress DLP redaction).

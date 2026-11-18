@@ -100,6 +100,12 @@ class SecurityVerdict(BaseModel):
     encoding_layers: list[str] = Field(default_factory=list)
     redacted_output: str | None = None
     stage_ms: dict[str, float] = Field(default_factory=dict)
+    # hybrid ML stage (None when the payload stayed on the deterministic fast path)
+    inspection_path: Literal["deterministic", "hybrid_ml"] = "deterministic"
+    ml_score_milli: int | None = None
+    ml_threshold_milli: int | None = None
+    ml_provider: str | None = None
+    model_sha16: str | None = None
 
     @property
     def rule_ids(self) -> list[str]:
@@ -127,6 +133,10 @@ class AuditEvent(BaseModel):
     risk_score: float = 0.0
     rule_ids: list[str] = Field(default_factory=list)
     latency_ms: float = 0.0
+    inspection_path: str = "deterministic"
+    ml_score_milli: int | None = None
+    ml_provider: str | None = None
+    model_sha16: str | None = None
     details: dict[str, Any] = Field(default_factory=dict)
 
     def payload(self) -> dict[str, Any]:
@@ -144,6 +154,10 @@ class AuditEvent(BaseModel):
             "risk_score": round(float(self.risk_score), 6),
             "rule_ids": list(self.rule_ids),
             "latency_ms": round(float(self.latency_ms), 6),
+            "inspection_path": self.inspection_path,
+            "ml_score_milli": self.ml_score_milli,
+            "ml_provider": self.ml_provider,
+            "model_sha16": self.model_sha16,
             "details": self.details,
         }
 

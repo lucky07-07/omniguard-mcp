@@ -105,6 +105,8 @@ rules:
   SECRET_TO_OUTBOUND_TOOL: 1.0
   # information flow
   TAINT_SENSITIVE_TO_EGRESS: 1.0
+  # hybrid ML stage
+  ML_PROMPT_INJECTION: 1.0
 
 # Compiled threat signatures, applied to every canonical view of every string argument
 # (ingress) and to tool outputs (egress). `flags: cs` makes a pattern case-sensitive.
@@ -181,3 +183,17 @@ signatures:
     - id: GEN_REVERSE_SHELL
       weight: 1.0
       pattern: '/dev/(tcp|udp)/|\bnc(at)?\s+(-\w+\s+)*-e\b|\bbash\s+-i\b|\bmkfifo\b'
+
+# Hybrid stage: integrity-pinned ONNX prompt-injection classifier (configs/model_manifest.json).
+# Routed ONLY for payloads that passed every deterministic check and contain free text
+# (argument type `text`, or any tool output) longer than `min_text_chars`.
+# Thresholds are integer milli-scores (0..1000) calibrated on the 20% dev partition and frozen
+# (see results/ml_calibration.json); TAINTED_UNTRUSTED sessions and untrusted tool outputs use the
+# lower, more aggressive threshold.
+ml:
+  enabled: true
+  min_text_chars: 40
+  route_arg_types: [text]
+  thresholds_milli:
+    clean: 896
+    tainted_untrusted: 328

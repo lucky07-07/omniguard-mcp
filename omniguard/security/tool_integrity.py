@@ -73,6 +73,7 @@ def build_manifest(tools: list[dict[str, Any]], tool_meta: dict[str, dict[str, A
                 "digest": tool_digest(t),
                 "taint_class": tool_meta[t["name"]]["taint_class"],
                 "arg_types": tool_meta[t["name"]]["arg_types"],
+                "output_type": tool_meta[t["name"]].get("output_type", "text"),
             }
             for t in tools
         },

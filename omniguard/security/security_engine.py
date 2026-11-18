@@ -14,6 +14,8 @@ yields the same decision and the same canonical_input_hash.
 
 from __future__ import annotations
 
+import json
+import re
 import time
 from typing import Any
 
@@ -32,9 +34,20 @@ from omniguard.security.analyzers import (
 from omniguard.security.canonicalizer import RecursiveCanonicalizer
 
 
+CONFIG_LINE_RE = re.compile(r"^\s*(#|//|;|\[[\w.\- ]+\]\s*$|[\w.\-]+\s*[:=])")
+
+
 class SecurityEngine:
-    def __init__(self, rules: dict[str, Any] | None = None, tool_meta: dict[str, dict[str, Any]] | None = None):
+    def __init__(self, rules: dict[str, Any] | None = None, tool_meta: dict[str, dict[str, Any]] | None = None,
+                 ml: Any | None = None):
         self.cfg = rules if rules is not None else security_rules()
+        self.ml = ml  # PromptInjectionClassifier or None (deterministic-only)
+        mlc = self.cfg.get("ml", {})
+        self.ml_min_chars = int(mlc.get("min_text_chars", 40))
+        self.ml_route_types = set(mlc.get("route_arg_types", ["text"]))
+        thr = mlc.get("thresholds_milli", {})
+        self.ml_thr_clean = int(thr.get("clean", 500))
+        self.ml_thr_untrusted = int(thr.get("tainted_untrusted", self.ml_thr_clean))
         self.tool_meta = tool_meta or {}
         sc = self.cfg.get("scoring", {})
         self.threshold = float(sc.get("deny_threshold", 1.0))
@@ -137,7 +150,7 @@ class SecurityEngine:
 
         risk, hard = self._score(hits, self.multiplier(taint))
         decision = Decision.DENY if hard or risk >= self.threshold else Decision.ALLOW
-        return SecurityVerdict(
+        verdict = SecurityVerdict(
             direction="ingress",
             decision=decision,
             risk_score=risk,
@@ -147,6 +160,14 @@ class SecurityEngine:
             encoding_layers=layers,
             stage_ms=timings,
         )
+        # Hybrid stage: only payloads that PASSED the deterministic checks and carry free text.
+        if decision == Decision.ALLOW and self.ml is not None:
+            texts = [seg for path, cs in strings.items() if self.arg_type(tool, path) in self.ml_route_types
+                     for seg in self.ml_segments(cs.canonical)]
+            if texts:
+                untrusted = TaintLabel.TAINTED_UNTRUSTED in taint
+                self._apply_ml(verdict, texts, untrusted)
+        return verdict
 
     # ------------------------------------------------------------------ egress
     def inspect_egress(self, tool: str, output: str, taint: set[TaintLabel] | None = None,
@@ -189,7 +210,7 @@ class SecurityEngine:
         for s in secrets:
             hits.append(RuleHit(rule_id=s.rule_id, weight=0.0, stage="egress_dlp",
                                 detail=f"span {s.start}-{s.end}, entropy {s.entropy:.2f}"))
-        return SecurityVerdict(
+        verdict = SecurityVerdict(
             direction="egress",
             decision=decision,
             risk_score=risk,
@@ -200,6 +221,77 @@ class SecurityEngine:
             redacted_output=redacted,
             stage_ms=timings,
         )
+        free_text_output = self.tool_meta.get(tool, {}).get("output_type", "text") == "text"
+        segments = self.ml_segments(cs.canonical) if (self.ml is not None and free_text_output) else []
+        if decision != Decision.DENY and segments:
+            untrusted = TaintLabel.TAINTED_UNTRUSTED in taint or tool_class == ToolTaintClass.UNTRUSTED_EXTERNAL
+            self._apply_ml(verdict, segments, untrusted)
+        return verdict
+
+    # ------------------------------------------------------------------ hybrid ML stage
+    def ml_segments(self, text: str, _depth: int = 0) -> list[str]:
+        """The free-*prose* segments of a payload that the classifier should see.
+
+        * prose longer than min_text_chars             -> [text]
+        * JSON                                         -> its long prose string values (recursively)
+        * config-shaped text (>= 80% of non-empty lines are comments or key=value / key: value pairs)
+                                                       -> [] (deterministic path only)
+        The classifier is an English prose model; on .env / key files it fires regardless of content, so such
+        text is left to the deterministic DLP + signatures, which already ran on it."""
+        if len(text) <= self.ml_min_chars:
+            return []
+        stripped = text.strip()
+        if stripped[:1] in "{[" and _depth < 3:
+            try:
+                obj = json.loads(stripped)
+            except ValueError:
+                obj = None
+            if obj is not None:
+                out: list[str] = []
+
+                def walk(v: Any) -> None:
+                    if isinstance(v, str):
+                        out.extend(self.ml_segments(v, _depth + 1))
+                    elif isinstance(v, dict):
+                        for x in v.values():
+                            walk(x)
+                    elif isinstance(v, list):
+                        for x in v:
+                            walk(x)
+
+                walk(obj)
+                return out
+        lines = [ln for ln in stripped.splitlines() if ln.strip()]
+        if len(lines) >= 2 and sum(1 for ln in lines if CONFIG_LINE_RE.match(ln)) / len(lines) >= 0.8:
+            return []
+        return [text]
+
+    def ml_routable(self, text: str) -> bool:
+        return bool(self.ml_segments(text))
+
+    def _apply_ml(self, verdict: SecurityVerdict, texts: list[str], untrusted: bool) -> None:
+        """Score free text with the integrity-pinned ONNX classifier; quantized score vs integer threshold."""
+        thr = self.ml_thr_untrusted if untrusted else self.ml_thr_clean
+        best, tok_ms, inf_ms = 0, 0.0, 0.0
+        for t in texts:
+            r = self.ml.score(t)
+            best = max(best, r.score_milli)
+            tok_ms += r.tokenize_ms
+            inf_ms += r.infer_ms
+        verdict.inspection_path = "hybrid_ml"
+        verdict.ml_score_milli = best
+        verdict.ml_threshold_milli = thr
+        verdict.ml_provider = self.ml.provider
+        verdict.model_sha16 = self.ml.sha16
+        verdict.stage_ms["ml_tokenize_ms"] = tok_ms
+        verdict.stage_ms["ml_infer_ms"] = inf_ms
+        if best >= thr:
+            verdict.triggered_rules.append(RuleHit(
+                rule_id="ML_PROMPT_INJECTION", weight=self._w("ML_PROMPT_INJECTION", 1.0), stage="hybrid_ml",
+                detail=f"score {best}/1000 >= threshold {thr} ({'untrusted' if untrusted else 'clean'}, {self.ml.provider})"))
+            verdict.decision = Decision.DENY
+            verdict.redacted_output = None
+            verdict.risk_score = round(max(verdict.risk_score, self.threshold), 4)
 
     # ------------------------------------------------------------------ taint helpers
     def sensitive_access(self, tool: str, args: dict[str, Any]) -> bool:

@@ -1,14 +1,15 @@
 {
   "version": 1,
   "algorithm": "sha256(canonical_json({name, description, inputSchema}))",
-  "pinned_at": "2026-11-18T14:51:20Z",
+  "pinned_at": "2026-11-18T18:12:44Z",
   "tools": {
     "read_file": {
       "digest": "a3017554fd9882fd832a98c180a8c6272fd4a11da204698e90c04d8646271fd1",
       "taint_class": "neutral",
       "arg_types": {
         "path": "path"
-      }
+      },
+      "output_type": "text"
     },
     "write_file": {
       "digest": "5b718a76e0eb0a8344653341c58b80f46cd5d7a60310cff2796057412982d03b",
@@ -16,35 +17,40 @@
       "arg_types": {
         "path": "path",
         "content": "text"
-      }
+      },
+      "output_type": "structured"
     },
     "list_dir": {
       "digest": "b39ea2b65518f801dda2c6b415bc1d5de9d6887c7a2c52497ff1671d28f8cf2d",
       "taint_class": "neutral",
       "arg_types": {
         "path": "path"
-      }
+      },
+      "output_type": "structured"
     },
     "query_db": {
       "digest": "8c8f480e1d762a6fa5024654e05748cb9edf0e439854e12b56d1056d0df5789a",
       "taint_class": "neutral",
       "arg_types": {
         "query": "sql"
-      }
+      },
+      "output_type": "structured"
     },
     "read_customer_records": {
       "digest": "d310142cd80729e936035ad7e69b6e184b5b58acf9ea0bd9ccdeca26199e0824",
       "taint_class": "sensitive_internal",
       "arg_types": {
         "customer_id": "text"
-      }
+      },
+      "output_type": "structured"
     },
     "web_fetch": {
       "digest": "580fc0ad53d3e6a4d4a65e9e4ac85d8e99507781cfdb5252ba4123578b2ded97",
       "taint_class": "untrusted_external",
       "arg_types": {
         "url": "url"
-      }
+      },
+      "output_type": "text"
     },
     "http_post": {
       "digest": "4b89294862e619a1d0cf32eb94acf58761f4131458be8655087995f26481202e",
@@ -52,7 +58,8 @@
       "arg_types": {
         "url": "url",
         "body": "text"
-      }
+      },
+      "output_type": "structured"
     },
     "send_email": {
       "digest": "e8a3eceb322a2309437652d19aea565f90fb1f1972a5f619d854ba81de7d4048",
@@ -61,7 +68,8 @@
         "to": "text",
         "subject": "text",
         "body": "text"
-      }
+      },
+      "output_type": "structured"
     },
     "webhook_emit": {
       "digest": "888f3358fe0c16a353cad00158cba21ef0bb77188d863f4346476c4078290e71",
@@ -69,14 +77,16 @@
       "arg_types": {
         "url": "url",
         "payload": "text"
-      }
+      },
+      "output_type": "structured"
     },
     "run_command": {
       "digest": "5d0b6e2e5c8ea77a424398dba11fd12b5f6302456c382dcdee2fe718a5985ebc",
       "taint_class": "neutral",
       "arg_types": {
         "command": "shell"
-      }
+      },
+      "output_type": "structured"
     }
   }
 }

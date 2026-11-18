@@ -9,8 +9,9 @@ Produces in results/:
     *.png summary figures
     SUMMARY.md
 
-The hybrid ML thresholds are NOT recalibrated here: they were calibrated once on the dev partition
+The hybrid ML thresholds are NOT recalibrated here: they were calibrated once on the validation set
 (`python -m omniguard.evaluation.calibrate_ml --write` -> results/ml_calibration.json) and frozen.
+Also refreshes frontend/metrics.json (the dashboard's static fallback).
 """
 
 from __future__ import annotations
@@ -162,54 +163,73 @@ def plot_tamper(tamper: dict, out: Path) -> None:
     plt.close(fig)
 
 
+ENGINE_ORDER = ["v1.0", "v1.1", "v1.2", "v1.2-small"]
+
+
+def _ext_view(st: dict) -> tuple[str, dict]:
+    """Headline view per stream: contamination-controlled (official test split) when it exists, else full."""
+    if st["views"].get("clean"):
+        return "clean", st["views"]["clean"]
+    return "full", st["views"]["full"]
+
+
 def plot_external(ext: dict, out: Path) -> None:
-    ok = {k: v for k, v in ext["streams"].items() if v.get("status") == "ok"}
+    ok = {k: v for k, v in ext["streams"].items() if v.get("status") == "ok" and "views" in v}
     if not ok:
         return
+    engines = [e for e in ENGINE_ORDER if ext["engines"].get(e, {}).get("available")]
     metrics = [("precision", "Precision"), ("recall_tpr", "Recall"), ("f1", "F1")]
-    engines = [("deterministic", "Deterministic only", SERIES[0]), ("hybrid", "Hybrid (det + pinned ML)", SERIES[1])]
-    fig, axes = plt.subplots(1, 3, figsize=(13, 4.6), sharey=True)
-    names = [k.replace("_", "\n") + ("\n(contaminated)" if v["contaminated"] else "") for k, v in ok.items()]
+    fig, axes = plt.subplots(1, 3, figsize=(14, 5.2), sharey=True)
+    names = []
+    for k, v in ok.items():
+        view, _ = _ext_view(v)
+        short = {"prompt_injection_ingress": "Prompt inj.\n(args)", "prompt_injection_egress": "Indirect inj.\n(outputs)",
+                 "jailbreak_ingress": "Jailbreak", "sql_injection": "SQL inj.", "command_injection": "Command inj."}
+        names.append(short.get(k, k) + ("\ntest split" if view == "clean" else "\nheld-out"))
     x = np.arange(len(ok))
-    w = 0.38
+    w = 0.8 / len(engines)
     for ax, (mk, mname) in zip(axes, metrics):
-        for i, (ek, ename, color) in enumerate(engines):
-            vals = [v[ek][mk] for v in ok.values()]
-            b = bar(ax, x + (i - 0.5) * w, vals, w, color, ename)
-            if mk == "f1":
+        for i, e in enumerate(engines):
+            vals = [_ext_view(v)[1].get(e, {}).get(mk, 0.0) for v in ok.values()]
+            b = bar(ax, x + (i - (len(engines) - 1) / 2) * w, vals, w, SERIES[i], ext["engines"][e]["label"])
+            if mk == "f1" and e == "v1.2":
                 ax.bar_label(b, fmt="%.2f", color=INK2, fontsize=7.5, padding=2)
-        ax.set_xticks(x, names, fontsize=7.5)
+        ax.set_xticks(x, names, fontsize=8)
         ax.set_ylim(0, 1.1)
         ax.set_title(mname, loc="left", fontsize=11)
-    axes[0].set_ylabel("score (held-out eval partition)")
+    axes[0].set_ylabel("score on held-out data")
     h, l = axes[0].get_legend_handles_labels()
-    fig.legend(h, l, ncol=2, loc="upper right", fontsize=9, frameon=False)
-    fig.suptitle("External validation: deterministic-only vs hybrid", x=0.01, ha="left", fontweight="bold")
-    fig.tight_layout()
+    fig.suptitle("Held-out detection: v1.0 deterministic vs v1.1 / v1.2 hybrid", x=0.01, y=0.985, ha="left", fontweight="bold")
+    fig.legend(h, l, ncol=4, loc="upper left", bbox_to_anchor=(0.01, 0.93), fontsize=9, frameon=False)
+    fig.tight_layout(rect=(0, 0, 1, 0.86))
     fig.savefig(out / "external_dataset_eval.png", dpi=160)
     plt.close(fig)
 
 
 def write_summary(ext: dict, tamper: dict, perf: dict, out: Path, elapsed: float) -> None:
-    thr = ext["protocol"]["ml_thresholds_milli"]
-    mm = ext["protocol"]["ml_model"] or {}
     lines = ["# OmniGuard-MCP - experiment summary", "",
              f"Generated {time.strftime('%Y-%m-%d %H:%M:%S')} on {platform.platform()} / Python {platform.python_version()}, "
-             f"total runtime {elapsed / 60:.1f} min.", "",
-             f"Hybrid model: `{mm.get('id', 'n/a')}` (sha256 `{mm.get('sha16', '')}`...), provider **{mm.get('provider', 'n/a')}**, "
-             f"frozen thresholds clean {thr['clean']} / untrusted {thr['tainted_untrusted']} (milli).", "",
-             "## External validation (held-out partition)", "",
-             "| Stream | n | Det. P | Det. R | Det. F1 | Hybrid P | Hybrid R | Hybrid F1 | Hybrid FPR |",
-             "|---|---|---|---|---|---|---|---|---|"]
-    for k, v in ext["streams"].items():
-        if v.get("status") != "ok":
-            lines.append(f"| {k} | - | {v.get('status')} | | | | | | |")
+             f"total runtime {elapsed / 60:.1f} min.", "", "## Engines", "",
+             "| Key | Engine | Model | Provider | Thresholds (milli) |", "|---|---|---|---|---|"]
+    for k, e in ext["engines"].items():
+        thr = e.get("thresholds_milli")
+        t = f"{thr['clean']} / {thr['elevated']}" + (" + rule-hit cascade" if thr["elevate_on_rule_hit"] else "") if thr else "-"
+        lines.append(f"| {k} | {e['label']} | {e['model'] or '-'} | {e.get('provider') or '-'} | {t} |")
+    lines += ["", "## External validation (held-out; prompt-injection rows = official test split only)", "",
+              "| Stream | View | n | " + " | ".join(f"{k} F1" for k in ENGINE_ORDER if k in ext['engines']) + " | v1.2 P / R |",
+              "|---|---|---|" + "---|" * (len([k for k in ENGINE_ORDER if k in ext['engines']]) + 1)]
+    for sname, st in ext["streams"].items():
+        if st.get("status") != "ok":
+            lines.append(f"| {sname} | - | - | {st.get('status')} |")
             continue
-        d, h = v["deterministic"], v["hybrid"]
-        name = k + (" (contaminated)" if v["contaminated"] else "")
-        lines.append(f"| {name} | {v['samples']} | {d['precision']:.3f} | {d['recall_tpr']:.3f} | {d['f1']:.3f} | "
-                     f"{h['precision']:.3f} | {h['recall_tpr']:.3f} | {h['f1']:.3f} | {h['fpr']:.3f} |")
-    lines += ["", "## Tamper detection (trials detected)", "", "| Regime | Detected | Rate |", "|---|---|---|"]
+        view, v = _ext_view(st)
+        n = next(iter(v.values()))["n"]
+        f1s = " | ".join(f"{v[k]['f1']:.3f}{' ⚠' if v[k]['contaminated_rows'] else ''}" if k in v else "-"
+                         for k in ENGINE_ORDER if k in ext["engines"])
+        p12 = f"{v['v1.2']['precision']:.3f} / {v['v1.2']['recall_tpr']:.3f}" if "v1.2" in v else "-"
+        lines.append(f"| {sname} | {view} | {n} | {f1s} | {p12} |")
+    lines += ["", "⚠ = rows overlap that model's published training data.", "",
+              "## Tamper detection (trials detected)", "", "| Regime | Detected | Rate |", "|---|---|---|"]
     for g in ("R1", "R2", "R3"):
         rr = [r for r in tamper["rows"] if r["regime"] == g]
         d, t = sum(r["detected_trials"] for r in rr), sum(r["trials"] for r in rr)
@@ -226,6 +246,14 @@ def write_summary(ext: dict, tamper: dict, perf: dict, out: Path, elapsed: float
     lines += ["", "Details: `external_dataset_eval.md`, `ml_calibration.json`, `tamper_detection_r1_r2_r3.md`, "
                   "`performance_storage_r1_r2_r3.md`."]
     (out / "SUMMARY.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def write_frontend_snapshot(out: Path) -> None:
+    """Static fallback for the Vercel dashboard when the Render API is asleep."""
+    from omniguard.api.metrics import build_metrics
+
+    snap = build_metrics(out)
+    (ROOT / "frontend" / "metrics.json").write_text(json.dumps(snap, separators=(",", ":")), encoding="utf-8")
 
 
 def main() -> None:
@@ -259,6 +287,7 @@ def main() -> None:
     plot_storage(perf, out)
     if not a.plots_only:
         write_summary(ext, tamper, perf, out, time.time() - t0)
+    write_frontend_snapshot(out)
     print(f"== done -> {out}")
 
 

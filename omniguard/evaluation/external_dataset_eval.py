@@ -1,4 +1,4 @@
-"""External validation of the deterministic security engine (no training, no ML).
+"""External validation of the OmniGuard engines (v1.0 deterministic / v1.1 hybrid / v1.2 hybrid).
 
 Labelled samples are streamed from public Hugging Face datasets with
 `datasets.load_dataset(..., streaming=True)` and wrapped, at evaluation time,
@@ -14,8 +14,10 @@ Held-out protocol: each row is assigned to a `dev` (20%) or `eval` (80%)
 partition by SHA-256 of its text. Only the dev partition may be inspected while
 writing rules; headline metrics are computed on a seeded uniform reservoir
 sample of at most --max-samples rows from the eval partition. A positive
-prediction is a DENY decision from the engine (ABAC is deliberately excluded,
-so these are detection metrics for the deterministic engine alone).
+prediction is a DENY decision from the engine (ABAC is deliberately excluded).
+
+Two views per stream: `full` (the v1.0/v1.1 reservoir draw) and `clean` (every eval-partition row of the
+dataset's official TEST split), which excludes rows that a model was trained on according to its model card.
 
     python -m omniguard.evaluation.external_dataset_eval --max-samples 500
 """
@@ -24,7 +26,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import json
 import os
 import random
 import statistics
@@ -36,7 +37,7 @@ from typing import Any, Callable, Iterator
 
 from tabulate import tabulate
 
-from omniguard.config import RESULTS_DIR, save_json
+from omniguard.config import CONFIG_DIR, RESULTS_DIR, ROOT, SECURITY_RULES_PATH, load_json, load_yaml, save_json
 from omniguard.models import Decision
 from omniguard.security.security_engine import SecurityEngine
 from omniguard.security.tool_integrity import ToolIntegrityRegistry
@@ -87,7 +88,8 @@ def partition(text: str) -> str:
     return "dev" if int(hashlib.sha256(text.encode("utf-8")).hexdigest(), 16) % 5 == 0 else "eval"
 
 
-def stream_rows(s: Stream) -> Iterator[tuple[str, int]]:
+def stream_rows(s: Stream) -> Iterator[tuple[str, int, str]]:
+    """Yield (text, label, official_split)."""
     from datasets import load_dataset
 
     for split in s.splits:
@@ -95,15 +97,18 @@ def stream_rows(s: Stream) -> Iterator[tuple[str, int]]:
         for row in ds:
             text = row.get(s.text_field)
             if isinstance(text, str) and text.strip():
-                yield text, s.label_fn(row)
+                yield text, s.label_fn(row), split
 
 
-def reservoir(rows: Iterator[tuple[str, int]], k: int, part: str, seed: int) -> tuple[list[tuple[str, int]], dict[str, int]]:
+def reservoir(rows: Iterator[tuple[str, int, str]], k: int, part: str, seed: int):
+    """Seeded uniform sample of <= k distinct rows from one partition. Returns (sample, all_rows, counts).
+    The RNG sequence is identical to v1.0/v1.1, so the same rows are drawn."""
     rng = random.Random(seed)
-    sample: list[tuple[str, int]] = []
+    sample: list[tuple[str, int, str]] = []
+    every: list[tuple[str, int, str]] = []
     seen, counts = 0, {"total": 0, "dev": 0, "eval": 0, "duplicates_skipped": 0}
     dedup: set[str] = set()
-    for text, label in rows:
+    for text, label, split in rows:
         counts["total"] += 1
         p = partition(text)
         counts[p] += 1
@@ -113,14 +118,66 @@ def reservoir(rows: Iterator[tuple[str, int]], k: int, part: str, seed: int) -> 
             counts["duplicates_skipped"] += 1
             continue
         dedup.add(text)
+        every.append((text, label, split))
         seen += 1
         if len(sample) < k:
-            sample.append((text, label))
+            sample.append((text, label, split))
         else:
             j = rng.randrange(seen)
             if j < k:
-                sample[j] = (text, label)
-    return sample, counts
+                sample[j] = (text, label, split)
+    return sample, every, counts
+
+
+# ====================================================================== engines
+@dataclass
+class EngineSpec:
+    key: str
+    label: str
+    rules_path: Path
+    model: str | None  # manifest entry name, or None for deterministic-only
+
+
+ENGINES = [
+    EngineSpec("v1.0", "v1.0 deterministic", CONFIG_DIR / "legacy" / "security_rules_v1.0.yaml", None),
+    EngineSpec("v1.1", "v1.1 hybrid (ProtectAI DeBERTa v2)", CONFIG_DIR / "legacy" / "security_rules_v1.1.yaml",
+               "protectai-deberta-v3-base-v2"),
+    EngineSpec("v1.2", "v1.2 hybrid (Horizon guard-base + cascade)", SECURITY_RULES_PATH, "horizon-guard-base"),
+    EngineSpec("v1.2-small", "ablation: v1.2 with Horizon guard-small", SECURITY_RULES_PATH, "horizon-guard-small"),
+]
+
+
+def build_engine(spec: EngineSpec, rules_override: dict[str, Any] | None = None) -> SecurityEngine | None:
+    from omniguard.security.ml_classifier import get_classifier, model_available
+
+    rules = rules_override if rules_override is not None else load_yaml(spec.rules_path)
+    meta = ToolIntegrityRegistry.load().tools
+    configured = (rules.get("ml") or {}).get("model")
+    cal_path = RESULTS_DIR / "ml_calibration.json"
+    if spec.model and configured and spec.model != configured and cal_path.exists():
+        # ablation model: use the thresholds its own validation sweep selected (results/ml_calibration.json)
+        cal = load_json(cal_path).get("models", {}).get(spec.model)
+        if cal:
+            rules = {**rules, "ml": {**rules["ml"], "model": spec.model,
+                                     "thresholds_milli": {"clean": cal["chosen"]["clean"],
+                                                          "elevated": cal["chosen"]["elevated"]}}}
+    if spec.model is None:
+        return SecurityEngine(rules=rules, tool_meta=meta)
+    if not model_available(model_name=spec.model):
+        return None
+    clf = get_classifier(model_name=spec.model)
+    for _ in range(3):  # warm-up so the first timed sample does not pay CUDA initialisation
+        clf.score("warm-up text for the classifier, long enough to be routed to the model.")
+    return SecurityEngine(rules=rules, tool_meta=meta, ml=clf)
+
+
+def inspect(engine: SecurityEngine, s: Stream, i: int, text: str):
+    env = s.wrap(i, text)
+    if s.direction == "ingress":
+        p = env["params"]
+        return engine.inspect_ingress(p["name"], p["arguments"], set())
+    out = "\n".join(c["text"] for c in env["result"]["content"] if c["type"] == "text")
+    return engine.inspect_egress(env["_omniguard_source_tool"], out, set())
 
 
 def _metrics(tp: int, fp: int, tn: int, fn: int) -> dict[str, Any]:
@@ -128,7 +185,7 @@ def _metrics(tp: int, fp: int, tn: int, fn: int) -> dict[str, Any]:
     prec = tp / (tp + fp) if tp + fp else 0.0
     rec = tp / (tp + fn) if tp + fn else 0.0
     return {
-        "tp": tp, "fp": fp, "tn": tn, "fn": fn,
+        "n": n, "tp": tp, "fp": fp, "tn": tn, "fn": fn,
         "accuracy": round((tp + tn) / n, 4) if n else 0.0,
         "precision": round(prec, 4),
         "recall_tpr": round(rec, 4),
@@ -142,24 +199,13 @@ def _pct(xs: list[float], q: float) -> float:
     return round(sorted(xs)[int(q * (len(xs) - 1))], 4) if xs else 0.0
 
 
-def evaluate(engine: SecurityEngine, s: Stream, sample: list[tuple[str, int]]) -> dict[str, Any]:
-    """One pass, two engines: the deterministic decision is the verdict before the hybrid stage
-    (the ML stage only ever runs on payloads the deterministic engine let through)."""
-    cm = {"deterministic": [0, 0, 0, 0], "hybrid": [0, 0, 0, 0]}  # tp fp tn fn
-    det_ms, ml_ms, total_ms = [], [], []
+def evaluate(engine: SecurityEngine, s: Stream, rows: list[tuple[str, int, str]]) -> dict[str, Any]:
+    cm = [0, 0, 0, 0]  # tp fp tn fn
+    det_ms, ml_ms, total_ms, fns, fps = [], [], [], [], []
     routed = 0
-    fns = {"deterministic": [], "hybrid": []}
-    fps = {"deterministic": [], "hybrid": []}
-    rule_hits: dict[str, int] = {}
-    for i, (text, label) in enumerate(sample):
-        env = s.wrap(i, text)
+    for i, (text, label, _split) in enumerate(rows):
         t0 = time.perf_counter()
-        if s.direction == "ingress":
-            p = env["params"]
-            v = engine.inspect_ingress(p["name"], p["arguments"], set())
-        else:
-            out = "\n".join(c["text"] for c in env["result"]["content"] if c["type"] == "text")
-            v = engine.inspect_egress(env["_omniguard_source_tool"], out, set())
+        v = inspect(engine, s, i, text)
         total = (time.perf_counter() - t0) * 1000
         ml = v.stage_ms.get("ml_tokenize_ms", 0.0) + v.stage_ms.get("ml_infer_ms", 0.0)
         total_ms.append(total)
@@ -167,37 +213,20 @@ def evaluate(engine: SecurityEngine, s: Stream, sample: list[tuple[str, int]]) -
         if v.inspection_path == "hybrid_ml":
             routed += 1
             ml_ms.append(ml)
-        hyb = v.decision == Decision.DENY
-        det = hyb and "ML_PROMPT_INJECTION" not in v.rule_ids
-        for name, pred in (("deterministic", det), ("hybrid", hyb)):
-            idx = 0 if (pred and label) else 1 if pred else 3 if label else 2
-            cm[name][idx] += 1
-            ex = {"text": text[:240], "rules": v.rule_ids, "ml_score_milli": v.ml_score_milli}
-            if idx == 1 and len(fps[name]) < 10:
-                fps[name].append(ex)
-            if idx == 3 and len(fns[name]) < 15:
-                fns[name].append(ex)
-        if hyb:
-            for r in v.rule_ids:
-                rule_hits[r] = rule_hits.get(r, 0) + 1
-    n = len(sample)
-    pos = sum(l for _, l in sample)
-    return {
-        "samples": n, "positives": pos, "negatives": n - pos, "routed_to_ml": routed,
-        "deterministic": {**_metrics(*cm["deterministic"]), "false_negative_examples": fns["deterministic"],
-                          "false_positive_examples": fps["deterministic"]},
-        "hybrid": {**_metrics(*cm["hybrid"]), "false_negative_examples": fns["hybrid"],
-                   "false_positive_examples": fps["hybrid"]},
-        "latency_ms": {
-            "deterministic_mean": round(statistics.fmean(det_ms), 4) if det_ms else 0.0,
-            "deterministic_p95": _pct(det_ms, 0.95),
-            "ml_mean_when_routed": round(statistics.fmean(ml_ms), 4) if ml_ms else 0.0,
-            "ml_p95_when_routed": _pct(ml_ms, 0.95),
-            "hybrid_total_mean": round(statistics.fmean(total_ms), 4) if total_ms else 0.0,
-            "hybrid_total_p95": _pct(total_ms, 0.95),
-        },
-        "top_rules_on_detections": dict(sorted(rule_hits.items(), key=lambda kv: -kv[1])[:8]),
-    }
+        pred = v.decision == Decision.DENY
+        idx = 0 if (pred and label) else 1 if pred else 3 if label else 2
+        cm[idx] += 1
+        ex = {"text": text[:240], "rules": v.rule_ids, "ml_score_milli": v.ml_score_milli, "tier": v.ml_tier}
+        if idx == 1 and len(fps) < 10:
+            fps.append(ex)
+        if idx == 3 and len(fns) < 15:
+            fns.append(ex)
+    return {**_metrics(*cm), "routed_to_ml": routed,
+            "latency_ms": {"deterministic_mean": round(statistics.fmean(det_ms), 4) if det_ms else 0.0,
+                           "ml_mean_when_routed": round(statistics.fmean(ml_ms), 4) if ml_ms else 0.0,
+                           "ml_p95_when_routed": _pct(ml_ms, 0.95),
+                           "total_mean": round(statistics.fmean(total_ms), 4) if total_ms else 0.0},
+            "false_negative_examples": fns, "false_positive_examples": fps}
 
 
 def offline_sanity(engine: SecurityEngine) -> dict[str, Any]:
@@ -214,32 +243,46 @@ def offline_sanity(engine: SecurityEngine) -> dict[str, Any]:
     return {"sanity_cases": len(cases), "sanity_correct": ok}
 
 
-CONTAMINATED = {"jackhhao/jailbreak-classification": "listed in the classifier's published training data"}
+# Rows a model was trained on (from its model card), per dataset and official split.
+def contaminated(model: str | None, dataset: str, split: str) -> bool:
+    if model is None:
+        return False
+    from omniguard.security.ml_classifier import load_manifest_entry
+
+    try:
+        overlap = load_manifest_entry(model).get("training_overlap", [])
+    except KeyError:
+        return False
+    return f"{dataset}:{split}" in overlap or f"{dataset}:all" in overlap
 
 
 def run(max_samples: int = 500, seed: int = 13, part: str = "eval", out_dir: Path = RESULTS_DIR,
-        streams: list[str] | None = None, ml: Any = "auto") -> dict[str, Any]:
+        streams: list[str] | None = None, engines: list[str] | None = None) -> dict[str, Any]:
     warnings.filterwarnings("ignore")
     os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
-    from omniguard.agents.gateway_agent import resolve_ml
-
-    clf = resolve_ml(ml)
-    engine = SecurityEngine(tool_meta=ToolIntegrityRegistry.load().tools, ml=clf)
-    if clf is not None:  # warm-up so the first timed sample does not pay CUDA initialisation
-        for _ in range(3):
-            clf.score("warm-up text for the classifier, long enough to be routed to the model.")
-    mm = None if clf is None else {"id": clf.manifest["model_id"], "revision": clf.manifest["revision"],
-                                   "sha16": clf.sha16, "provider": clf.provider}
+    specs = [e for e in ENGINES if not engines or e.key in engines]
+    built = {e.key: build_engine(e) for e in specs}
     res: dict[str, Any] = {
-        "title": "Detection Metrics - External Validation: Deterministic-only vs Hybrid (Deterministic + pinned ML)",
-        "protocol": {"max_samples_per_stream": max_samples, "seed": seed, "partition": part,
-                     "partitioning": "sha256(text) % 5 == 0 -> dev (20%), else eval (80%)",
-                     "positive_prediction": "engine decision == DENY (ABAC excluded)",
-                     "deterministic": "rules only, frozen before the eval run",
-                     "hybrid": "deterministic + ONNX classifier on routed free text; thresholds calibrated on dev "
-                               "(results/ml_calibration.json) and frozen before the eval run",
-                     "ml_thresholds_milli": {"clean": engine.ml_thr_clean, "tainted_untrusted": engine.ml_thr_untrusted},
-                     "ml_model": mm, "contaminated_streams": CONTAMINATED},
+        "title": "External validation: v1.0 deterministic vs v1.1 hybrid vs v1.2 hybrid (zero-leakage protocol)",
+        "protocol": {
+            "max_samples_per_stream": max_samples, "seed": seed, "partition": part,
+            "partitioning": "sha256(text) % 5 == 0 -> dev (20%), else eval (80%)",
+            "positive_prediction": "engine decision == DENY (ABAC excluded)",
+            "views": {
+                "full": "seeded reservoir sample of <= max_samples eval-partition rows (same draw as v1.0/v1.1)",
+                "clean": "every eval-partition row from the dataset's official TEST split - for the prompt-injection "
+                         "streams this excludes rows the Horizon models were trained on (deepset/jackhhao train)",
+            },
+            "thresholds_frozen_before_eval": True,
+        },
+        "engines": {e.key: {"label": e.label, "rules": str(e.rules_path.relative_to(ROOT)).replace("\\", "/"),
+                            "model": e.model, "available": built[e.key] is not None,
+                            "provider": (built[e.key].ml.provider if built[e.key] is not None and built[e.key].ml else None),
+                            "model_sha16": (built[e.key].ml.sha16 if built[e.key] is not None and built[e.key].ml else None),
+                            "thresholds_milli": ({"clean": built[e.key].ml_thr_clean, "elevated": built[e.key].ml_thr_elevated,
+                                                  "elevate_on_rule_hit": built[e.key].elevate_on_rule_hit}
+                                                 if built[e.key] is not None and built[e.key].ml else None)}
+                    for e in specs},
         "streams": {},
     }
     for s in STREAMS:
@@ -247,21 +290,36 @@ def run(max_samples: int = 500, seed: int = 13, part: str = "eval", out_dir: Pat
             continue
         t0 = time.perf_counter()
         try:
-            sample, counts = reservoir(stream_rows(s), max_samples, part, seed)
+            sample, every, counts = reservoir(stream_rows(s), max_samples, part, seed)
         except Exception as exc:  # no network / hub outage: fail gracefully
             res["streams"][s.name] = {"dataset": s.dataset, "status": f"unavailable: {type(exc).__name__}: {exc}"[:300]}
-            res.setdefault("offline_sanity_check", offline_sanity(engine))
+            first = next((b for b in built.values() if b is not None), None)
+            if first is not None:
+                res.setdefault("offline_sanity_check", offline_sanity(first))
             print(f"[external] {s.name}: dataset unavailable ({type(exc).__name__}); skipped")
             continue
-        m = evaluate(engine, s, sample)
-        m.update({"dataset": s.dataset, "splits": s.splits, "direction": s.direction, "domain": s.domain,
-                  "contaminated": s.dataset in CONTAMINATED, "rows_streamed": counts,
-                  "stream_seconds": round(time.perf_counter() - t0, 2), "status": "ok"})
-        res["streams"][s.name] = m
-        d, h = m["deterministic"], m["hybrid"]
-        print(f"[external] {s.name}: n={m['samples']} routed={m['routed_to_ml']} | det P={d['precision']:.3f} "
-              f"R={d['recall_tpr']:.3f} F1={d['f1']:.3f} | hybrid P={h['precision']:.3f} R={h['recall_tpr']:.3f} "
-              f"F1={h['f1']:.3f} FPR={h['fpr']:.3f}")
+        clean_rows = [r for r in every if r[2] == "test"] if "test" in s.splits else None
+        entry: dict[str, Any] = {"dataset": s.dataset, "splits": s.splits, "direction": s.direction, "domain": s.domain,
+                                 "rows_streamed": counts, "status": "ok", "views": {"full": {}, "clean": {}}}
+        for e in specs:
+            eng = built[e.key]
+            if eng is None:
+                continue
+            full = evaluate(eng, s, sample)
+            full["contaminated_rows"] = sum(contaminated(e.model, s.dataset, r[2]) for r in sample)
+            entry["views"]["full"][e.key] = full
+            if clean_rows is not None:
+                cl = evaluate(eng, s, clean_rows)
+                cl["contaminated_rows"] = sum(contaminated(e.model, s.dataset, r[2]) for r in clean_rows)
+                entry["views"]["clean"][e.key] = cl
+            msg = f"[external] {s.name:26s} {e.key:10s} full F1={full['f1']:.3f} (P={full['precision']:.3f} R={full['recall_tpr']:.3f})"
+            if clean_rows is not None:
+                msg += f" | clean(test) n={cl['n']} F1={cl['f1']:.3f} (P={cl['precision']:.3f} R={cl['recall_tpr']:.3f})"
+            print(msg, flush=True)
+        if clean_rows is None:
+            entry["views"]["clean"] = None
+        entry["stream_seconds"] = round(time.perf_counter() - t0, 2)
+        res["streams"][s.name] = entry
     suffix = "" if part == "eval" else f"_{part}"
     save_json(out_dir / f"external_dataset_eval{suffix}.json", res)
     write_md(res, out_dir / f"external_dataset_eval{suffix}.md")
@@ -269,56 +327,63 @@ def run(max_samples: int = 500, seed: int = 13, part: str = "eval", out_dir: Pat
 
 
 def write_md(res: dict[str, Any], path: Path) -> None:
-    ok = {k: v for k, v in res["streams"].items() if v.get("status") == "ok"}
-    rows = []
-    for k, v in ok.items():
-        name = k + (" (contaminated)" if v["contaminated"] else "")
-        for eng in ("deterministic", "hybrid"):
-            m = v[eng]
-            rows.append([name if eng == "deterministic" else "", eng, v["samples"], v["positives"],
-                         f"{m['accuracy']:.3f}", f"{m['precision']:.3f}", f"{m['recall_tpr']:.3f}", f"{m['f1']:.3f}",
-                         f"{m['fpr']:.3f}", f"{m['fnr']:.3f}", m["tp"], m["fp"], m["tn"], m["fn"]])
-    table = tabulate(rows, headers=["Stream", "Engine", "n", "Pos", "Acc", "Prec", "Recall", "F1", "FPR", "FNR",
-                                    "TP", "FP", "TN", "FN"], tablefmt="github")
-    lat = tabulate([[k, v["routed_to_ml"], f"{v['latency_ms']['deterministic_mean']:.3f}",
-                     f"{v['latency_ms']['deterministic_p95']:.3f}", f"{v['latency_ms']['ml_mean_when_routed']:.2f}",
-                     f"{v['latency_ms']['ml_p95_when_routed']:.2f}", f"{v['latency_ms']['hybrid_total_mean']:.2f}"]
-                    for k, v in ok.items()],
-                   headers=["Stream", "Routed to ML", "Det. mean ms", "Det. p95 ms", "ML mean ms (routed)",
-                            "ML p95 ms (routed)", "Hybrid mean ms (all)"], tablefmt="github")
-    skipped = [f"- `{k}`: {v['status']}" for k, v in res["streams"].items() if v.get("status") != "ok"]
+    eng = res["engines"]
+    keys = [k for k, v in eng.items() if v["available"]]
+    parts = [f"# {res['title']}\n"]
+    p = res["protocol"]
+    parts.append(
+        "Samples are streamed from Hugging Face (`streaming=True`), wrapped into MCP `tools/call` request envelopes "
+        "(ingress) or tool-result envelopes (egress), and inspected by each engine. Partition: "
+        f"**{p['partition']}** ({p['partitioning']}). Positive = {p['positive_prediction']}. All rules and ML thresholds "
+        "were frozen before this run.\n\n"
+        f"* **full** view: {p['views']['full']}.\n* **clean** view: {p['views']['clean']}.\n\n"
+        "| Engine | Rules | Model | Provider | Thresholds (milli) |\n|---|---|---|---|---|\n"
+        + "".join(f"| {k} - {v['label']} | `{v['rules']}` | {v['model'] or '-'} | {v['provider'] or '-'} | "
+                  f"{(str(v['thresholds_milli']['clean']) + ' / ' + str(v['thresholds_milli']['elevated']) + (' (+rule-hit cascade)' if v['thresholds_milli']['elevate_on_rule_hit'] else '')) if v['thresholds_milli'] else '-'} |\n"
+                  for k, v in eng.items()))
+    for view in ("clean", "full"):
+        rows = []
+        for sname, st in res["streams"].items():
+            if st.get("status") != "ok" or st["views"].get(view) is None:
+                continue
+            for k in keys:
+                m = st["views"][view].get(k)
+                if m is None:
+                    continue
+                flag = " ⚠" if m["contaminated_rows"] else ""
+                rows.append([sname if k == keys[0] else "", k + flag, m["n"], f"{m['precision']:.3f}", f"{m['recall_tpr']:.3f}",
+                             f"{m['f1']:.3f}", f"{m['fpr']:.3f}", m["tp"], m["fp"], m["tn"], m["fn"], m["routed_to_ml"],
+                             m["contaminated_rows"]])
+        title = ("Contamination-controlled view (official test split ∩ eval partition) - headline"
+                 if view == "clean" else "Full eval-partition view (500-row reservoir, same draw as v1.0/v1.1)")
+        parts.append(f"\n## {title}\n\n" + tabulate(rows, headers=["Stream", "Engine", "n", "Prec", "Recall", "F1", "FPR",
+                                                                   "TP", "FP", "TN", "FN", "Routed", "Train-overlap rows"],
+                                                   tablefmt="github") + "\n\n⚠ = some rows were in that model's published "
+                                                                       "training data; read those rows as memorisation.\n")
+    lat = []
+    for sname, st in res["streams"].items():
+        if st.get("status") != "ok":
+            continue
+        for k in keys:
+            m = st["views"]["full"].get(k)
+            if m is not None and m["routed_to_ml"]:
+                lat.append([sname, k, m["routed_to_ml"], f"{m['latency_ms']['deterministic_mean']:.3f}",
+                            f"{m['latency_ms']['ml_mean_when_routed']:.2f}", f"{m['latency_ms']['ml_p95_when_routed']:.2f}"])
+    parts.append("\n## ML latency when routed (full view)\n\n" + tabulate(
+        lat, headers=["Stream", "Engine", "Routed", "Det. mean ms", "ML mean ms", "ML p95 ms"], tablefmt="github") + "\n")
     fn_md = []
-    for k, v in ok.items():
-        ex = v["hybrid"]["false_negative_examples"]
+    for sname, st in res["streams"].items():
+        if st.get("status") != "ok" or "v1.2" not in st["views"]["full"]:
+            continue
+        ex = st["views"]["full"]["v1.2"]["false_negative_examples"]
         if ex:
-            fn_md.append(f"### {k}\n")
+            fn_md.append(f"### {sname}\n")
             for e in ex[:6]:
                 t = e["text"].replace("\n", " ").replace("|", "\\|")
-                fn_md.append(f"- ml {e['ml_score_milli']}, rules {e['rules'] or '[]'}: `{t[:160]}`")
+                fn_md.append(f"- ml {e['ml_score_milli']} ({e['tier']}), rules {e['rules'] or '[]'}: `{t[:150]}`")
             fn_md.append("")
-    p = res["protocol"]
-    mm = p["ml_model"] or {"id": "n/a", "revision": "n/a", "sha16": "n/a", "provider": "n/a"}
-    thr = p["ml_thresholds_milli"]
-    md = (
-        f"# {res['title']}\n\n"
-        "Samples are streamed from Hugging Face (`streaming=True`), wrapped into MCP `tools/call` request envelopes "
-        "(ingress) or tool-result envelopes (egress), and inspected once. The deterministic decision is the verdict "
-        "*before* the hybrid stage, so both engines are scored on identical inputs.\n"
-        f"Partition: **{p['partition']}** ({p['partitioning']}); up to {p['max_samples_per_stream']} rows per stream "
-        f"by seeded reservoir sampling (seed {p['seed']}).\n\n"
-        f"* Model: `{mm['id']}` @ `{mm['revision'][:8]}` (sha256 `{mm['sha16']}...`), execution provider **{mm['provider']}**.\n"
-        f"* Frozen ML thresholds (milli): clean **{thr['clean']}**; tainted-untrusted sessions and untrusted tool output "
-        f"**{thr['tainted_untrusted']}**.\n"
-        "* Routing: only payloads that pass every deterministic check and carry free text longer than 40 characters.\n"
-        "* **Contaminated:** `jackhhao/jailbreak-classification` is in the classifier's published training data, so its "
-        "hybrid numbers measure memorisation, not generalisation. Do not use them as evidence.\n\n"
-        f"## Detection metrics (deterministic-only vs hybrid)\n\n{table}\n\n"
-        f"## Latency per inspection (ms)\n\n{lat}\n\n"
-        + "\n".join(skipped)
-        + "\n\n## Remaining hybrid false negatives (documented limitation)\n\n"
-        + "\n".join(fn_md) + "\n"
-    )
-    path.write_text(md, encoding="utf-8")
+    parts.append("\n## Remaining v1.2 false negatives (documented limitation)\n\n" + "\n".join(fn_md) + "\n")
+    path.write_text("".join(parts), encoding="utf-8")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -327,10 +392,10 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--seed", type=int, default=13)
     ap.add_argument("--partition", choices=["eval", "dev"], default="eval")
     ap.add_argument("--streams", nargs="*", default=None)
+    ap.add_argument("--engines", nargs="*", default=None, help="subset of: v1.0 v1.1 v1.2 v1.2-small")
     ap.add_argument("--out", default=str(RESULTS_DIR))
-    ap.add_argument("--deterministic-only", action="store_true")
     a = ap.parse_args(argv)
-    run(a.max_samples, a.seed, a.partition, Path(a.out), a.streams, ml=False if a.deterministic_only else "auto")
+    run(a.max_samples, a.seed, a.partition, Path(a.out), a.streams, a.engines)
 
 
 if __name__ == "__main__":

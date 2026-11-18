@@ -1,9 +1,10 @@
 """OmniGuard-MCP: a tamper-evident security gateway and deterministic
 information-flow firewall for Model Context Protocol (MCP) agent systems.
 
-No machine-learning model is trained, loaded or executed anywhere in this
-package. Every security decision is produced by deterministic, explainable
-rules and is recorded in a cryptographically verifiable audit trail.
+Every security decision comes from deterministic, explainable rules, optionally
+followed by a SHA-256-pinned ONNX prompt-injection classifier on free-text prose
+(inference only; nothing is trained here). All decisions are recorded in a
+cryptographically verifiable audit trail.
 """
 
-__version__ = "0.1.0"
+__version__ = "1.2.0"

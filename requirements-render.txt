@@ -1,0 +1,14 @@
+# Runtime dependencies for the live demo API on Render (omniguard/api/server.py).
+# Deterministic engine + SQLite ledgers + embedded EVM + watcher only:
+# no onnxruntime / torch / transformers / datasets - the ONNX stage is disabled on the 512 MB free tier.
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.6
+pyyaml>=6.0
+mcp>=1.0
+web3>=7.0
+eth-tester>=0.12.0b1
+py-evm>=0.10.1b1
+eth-account>=0.13
+py-solc-x>=2.0
+tabulate>=0.9

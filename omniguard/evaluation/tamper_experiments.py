@@ -7,9 +7,9 @@ and the independent watcher is launched as a separate OS process
 detected when the watcher raises at least one TamperAlert, or for scenario 6a,
 when the gateway strips the tool.
 
-Attacker model: write access to the audit database and the gateway's
-configuration, but not the private key of the chain anchorer and not the
-watcher's own manifest snapshot.
+Attacker model: write access to the audit database, the gateway's configuration
+and the deployed model files, but not the private key of the chain anchorer and
+not the watcher's own tool / model manifest snapshots.
 
     python -m omniguard.evaluation.tamper_experiments --trials 5
 """
@@ -17,7 +17,9 @@ watcher's own manifest snapshot.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import random
 import shutil
 import sqlite3
@@ -29,7 +31,7 @@ from typing import Any, Callable
 
 from tabulate import tabulate
 
-from omniguard.config import PINNED_TOOLS_PATH, RESULTS_DIR, load_json, save_json
+from omniguard.config import PINNED_TOOLS_PATH, ROOT, RESULTS_DIR, load_json, save_json
 from omniguard.crypto.blockchain import compile_contract
 from omniguard.crypto.chain_node import ChainNodeProcess
 from omniguard.crypto.hashing import GENESIS_HASH, canonical_json
@@ -39,6 +41,7 @@ from omniguard.models import Regime
 from omniguard.security.tool_integrity import tool_digest
 from omniguard.storage.audit_store import EVENT_COLUMNS, recompute_entry_hash, table_for
 
+MODEL_MANIFEST_PATH = ROOT / "configs" / "model_manifest.json"
 RUGPULL_TOOL = "read_file"
 RUGPULL_OVERRIDE = {
     RUGPULL_TOOL: {
@@ -180,6 +183,51 @@ def tamper_rugpull_insider(db: Path, regime: Regime, rng: random.Random, trial_d
     return f"{RUGPULL_TOOL} description poisoned; gateway pin + registry rewritten to the new digest"
 
 
+def _model_dir() -> Path:
+    return ROOT / load_json(MODEL_MANIFEST_PATH)["local_dir"]
+
+
+def tamper_model_insider(db: Path, regime: Regime, rng: random.Random, trial_dir: Path, trial_index: int = 0,
+                         **_) -> str:
+    """Offline model/tokenizer tampering; the insider also rewrites the gateway's model manifest so the
+    gateway's own load-time SHA-256 check passes. Untouched files are hard-linked (identical bytes)."""
+    src, dst = _model_dir(), trial_dir / "model"
+    dst.mkdir(parents=True, exist_ok=True)
+    target = "tokenizer.json" if trial_index % 2 == 0 else "model.onnx"
+    for name in ("model.onnx", "tokenizer.json", "config.json"):
+        if name == target:
+            shutil.copyfile(src / name, dst / name)
+        else:
+            try:
+                os.link(src / name, dst / name)
+            except OSError:
+                shutil.copyfile(src / name, dst / name)
+    if target == "tokenizer.json":
+        raw = (dst / target).read_text(encoding="utf-8")
+        # backdoor-style edit: remap the vocabulary piece for "ignore" so injection phrasing tokenizes differently
+        raw = raw.replace('"\u2581ignore"', '"\u2581ignorx"', 1)
+        (dst / target).write_text(raw, encoding="utf-8")
+        what = "tokenizer vocabulary entry remapped"
+    else:
+        size = (dst / target).stat().st_size
+        off = rng.randrange(size // 2, size - 1)
+        with open(dst / target, "r+b") as fh:
+            fh.seek(off)
+            b = fh.read(1)
+            fh.seek(off)
+            fh.write(bytes([b[0] ^ 0x01]))
+        what = f"1 weight byte flipped at offset {off:,}"
+    manifest = load_json(MODEL_MANIFEST_PATH)
+    for name in ("model.onnx", "tokenizer.json"):
+        h = hashlib.sha256()
+        with open(dst / name, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 22), b""):
+                h.update(chunk)
+        manifest["files"][name]["sha256"] = h.hexdigest()
+    save_json(trial_dir / "gateway_model_manifest.json", manifest)
+    return f"{target}: {what}; gateway model manifest rewritten to the new digest"
+
+
 def gateway_detects_naive_rugpull(trial_dir: Path) -> tuple[bool, float]:
     """Scenario 6a: downstream mutated, pins untouched -> does the gateway strip the tool?"""
     from omniguard.agents.gateway_agent import GatewayAgent, InProcessDownstream
@@ -204,17 +252,21 @@ SCENARIOS: list[tuple[str, str, Callable[..., str] | None]] = [
     ("S5", "Merkle root forgery (chain + local roots recomputed)", tamper_root_forgery),
     ("S6a", "Tool rug-pull (downstream only, pins intact)", None),
     ("S6b", "Tool rug-pull (insider also rewrites gateway pins)", tamper_rugpull_insider),
+    ("S7", "ML model/tokenizer tampering (insider also rewrites model manifest)", tamper_model_insider),
 ]
 
 
 # ====================================================================== harness
 def run_watcher_subprocess(db: Path, regime: Regime, *, rpc_url: str | None, contract: str | None,
-                           snapshot: Path | None, overrides: Path | None) -> dict[str, Any]:
+                           snapshot: Path | None, overrides: Path | None, model_snapshot: Path | None = None,
+                           model_dir: Path | None = None) -> dict[str, Any]:
     cmd = [sys.executable, "-m", "omniguard.agents.watcher_agent", "--db", str(db), "--regime", regime.value, "--json"]
     if regime == Regime.R3:
         cmd += ["--rpc-url", rpc_url, "--contract", contract, "--manifest-snapshot", str(snapshot), "--live-sample-server"]
         if overrides is not None:
             cmd += ["--tools-overrides", str(overrides)]
+        if model_snapshot is not None:
+            cmd += ["--model-manifest-snapshot", str(model_snapshot), "--model-dir", str(model_dir or _model_dir())]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     lines = [l for l in proc.stdout.splitlines() if l.startswith("{")]
     if not lines:
@@ -251,6 +303,8 @@ def run(trials: int = 5, n_requests: int = 96, batch_size: int = 16, seed: int =
     work.mkdir(parents=True)
     snapshot = work / "watcher_manifest_snapshot.json"
     shutil.copyfile(PINNED_TOOLS_PATH, snapshot)  # watcher's independent pin copy (it only ever reads it)
+    model_snapshot = work / "watcher_model_manifest_snapshot.json"
+    shutil.copyfile(MODEL_MANIFEST_PATH, model_snapshot)
 
     results: dict[str, Any] = {"config": {"trials": trials, "workload_requests": n_requests, "batch_size": batch_size,
                                           "seed": seed, "watcher": "separate OS process, mode=ro DB, own RPC client"},
@@ -259,7 +313,7 @@ def run(trials: int = 5, n_requests: int = 96, batch_size: int = 16, seed: int =
         for regime in (Regime.R1, Regime.R2, Regime.R3):
             base = build_base_log(regime, work, n_requests, batch_size, node.url if regime == Regime.R3 else None, seed)
             baseline = run_watcher_subprocess(base["db"], regime, rpc_url=node.url, contract=base["contract"],
-                                              snapshot=snapshot, overrides=None)
+                                              snapshot=snapshot, overrides=None, model_snapshot=model_snapshot)
             results["regimes"][regime.value] = {
                 "records": base["records"], "decisions": base["decisions"], "contract": base["contract"],
                 "baseline_alerts": len(baseline["alerts"]), "baseline_sweep_ms": baseline["elapsed_ms"],
@@ -283,11 +337,15 @@ def run(trials: int = 5, n_requests: int = 96, batch_size: int = 16, seed: int =
                         continue
                     db = tdir / "audit.db"
                     shutil.copyfile(base["db"], db)
-                    note = fn(db, regime, rng, batch_size=batch_size, trial_dir=tdir)
+                    note = fn(db, regime, rng, batch_size=batch_size, trial_dir=tdir, trial_index=t)
                     notes.append(note)
                     overrides = tdir / "tool_overrides.json" if sid == "S6b" else None
+                    mdir = tdir / "model" if sid == "S7" else None
                     rep = run_watcher_subprocess(db, regime, rpc_url=node.url, contract=base["contract"],
-                                                 snapshot=snapshot, overrides=overrides)
+                                                 snapshot=snapshot, overrides=overrides,
+                                                 model_snapshot=model_snapshot, model_dir=mdir)
+                    if mdir is not None:
+                        shutil.rmtree(mdir, ignore_errors=True)  # drop the 739 MB tampered copy
                     if rep["alerts"]:
                         det += 1
                         mechanisms.update(a["violation"] for a in rep["alerts"])
@@ -336,10 +394,12 @@ def write_outputs(results: dict[str, Any], out_dir: Path) -> None:
                                     "Audit records"], tablefmt="github")
     cfg = results["config"]
     ck = tabulate([[g, *(f"{results['regimes'][g]['baseline_check_ms'].get(c, 0):.2f}" if c in results['regimes'][g]['baseline_check_ms'] else "-"
-                         for c in ("id_continuity", "hash_chain", "merkle_roots", "chain_anchors", "manifest_drift")),
+                         for c in ("id_continuity", "hash_chain", "merkle_roots", "chain_anchors", "manifest_drift",
+                                   "model_integrity")),
                     f"{results['regimes'][g]['baseline_sweep_ms']:.2f}"] for g in ("R1", "R2", "R3")],
                   headers=["Regime", "id continuity", "hash chain", "Merkle roots", "chain anchors",
-                           "manifest drift (incl. live server spawn)", "total sweep"], tablefmt="github")
+                           "manifest drift (incl. live server spawn)",
+                           "model integrity (re-hash 747 MB)", "total sweep"], tablefmt="github")
     md = f"""# Experiment 1 - Tamper detection and verifiability (R1 vs R2 vs R3)
 
 Workload: {cfg['workload_requests']} MCP `tools/call` requests (seed {cfg['seed']}), Merkle batch size {cfg['batch_size']},
@@ -364,7 +424,7 @@ excluding process start-up. S6a is detected inline by the gateway (no watcher in
 {detail}
 
 R1 checks only id continuity, R2 only the hash chain, R3 the hash chain plus Merkle roots,
-on-chain anchors and tool-manifest drift against the watcher's own snapshot.
+on-chain anchors, tool-manifest drift and ML model/tokenizer integrity against the watcher's own snapshots.
 """
     (out_dir / "tamper_detection_r1_r2_r3.md").write_text(md, encoding="utf-8")
 

@@ -8,6 +8,9 @@ Produces in results/:
     performance_storage_r1_r2_r3.json / .md
     *.png summary figures
     SUMMARY.md
+
+The hybrid ML thresholds are NOT recalibrated here: they were calibrated once on the dev partition
+(`python -m omniguard.evaluation.calibrate_ml --write` -> results/ml_calibration.json) and frozen.
 """
 
 from __future__ import annotations
@@ -52,60 +55,67 @@ def bar(ax, x, h, w, color, label=None):
 
 
 def plot_latency(perf: dict, out: Path) -> None:
-    R = perf["regimes"]
-    regs = list(R)
     stats = ["mean", "p50", "p95", "p99"]
-    fig, ax = plt.subplots(figsize=(8.5, 4.6))
-    w = 0.8 / len(regs)
-    x = np.arange(len(stats))
-    for i, g in enumerate(regs):
-        vals = [R[g]["e2e_latency_ms"][s] for s in stats]
-        bar(ax, x + (i - (len(regs) - 1) / 2) * w, vals, w, REGIME_COLOR[g], g)
-    ax.set_yscale("log")
-    ax.set_xticks(x, ["Mean", "p50", "p95", "p99"])
-    ax.set_ylabel("End-to-end latency per tools/call (ms, log scale)")
-    ax.set_title(f"Request latency, M={perf['config']['requests']}, B={perf['config']['batch_size']}", loc="left")
-    ax.legend(ncol=len(regs), loc="upper left")
+    kinds = list(perf["workloads"])
+    fig, axes = plt.subplots(1, len(kinds), figsize=(11, 4.4), sharey=True)
+    for ax, kind in zip(np.atleast_1d(axes), kinds):
+        R = perf["workloads"][kind]["regimes"]
+        regs = list(R)
+        w = 0.8 / len(regs)
+        x = np.arange(len(stats))
+        for i, g in enumerate(regs):
+            bar(ax, x + (i - (len(regs) - 1) / 2) * w, [R[g]["e2e_latency_ms"][st] for st in stats], w, REGIME_COLOR[g], g)
+        ax.set_yscale("log")
+        ax.set_xticks(x, ["Mean", "p50", "p95", "p99"])
+        routed = R["R1"]["routed_to_ml"]
+        ax.set_title(f"{kind} ({routed}/{R['R1']['requests']} routed to ML)", loc="left", fontsize=11)
+    np.atleast_1d(axes)[0].set_ylabel("End-to-end latency per tools/call (ms, log)")
+    np.atleast_1d(axes)[0].legend(ncol=2, loc="upper left", fontsize=8.5)
+    fig.suptitle(f"Request latency, M={perf['config']['requests_per_workload']} per workload, "
+                 f"B={perf['config']['batch_size']}", x=0.01, ha="left", fontweight="bold")
     fig.tight_layout()
     fig.savefig(out / "latency_r1_r2_r3.png", dpi=160)
     plt.close(fig)
 
 
 def plot_breakdown(perf: dict, out: Path) -> None:
-    R = perf["regimes"]
-    regs = list(R)
-    stages = [("tool_integrity", "Tool integrity"), ("security_engine", "Security engine"),
+    stages = [("tool_integrity", "Tool integrity"), ("deterministic_engine", "Deterministic engine"),
+              ("ml_tokenize", "ML tokenize"), ("ml_onnx_inference", "ONNX inference (GPU)"),
               ("downstream_tool", "Downstream tool"), ("hash_chain", "Hash chain"),
               ("merkle_build_amortized", "Merkle build (amortized)"), ("anchor_tx_amortized", "Anchor tx (amortized)")]
-    fig, ax = plt.subplots(figsize=(8.5, 3.8))
-    left = np.zeros(len(regs))
-    for j, (k, name) in enumerate(stages):
-        vals = np.array([R[g]["stage_ms_mean_per_request"][k] for g in regs])
-        ax.barh(regs, vals, left=left, color=SERIES[j], label=name, edgecolor=SURFACE, linewidth=1.5, height=0.6)
-        left += vals
-    rest = np.array([R[g]["e2e_latency_ms"]["mean"] for g in regs]) - left
-    ax.barh(regs, np.clip(rest, 0, None), left=left, color="#c9c8c2", label="SQLite write + other",
-            edgecolor=SURFACE, linewidth=1.5, height=0.6)
-    xmax = 1.0
-    for i, g in enumerate(regs):
-        total = R[g]["e2e_latency_ms"]["mean"]
-        if total > xmax:
-            ax.text(xmax * 0.985, i, f"clipped: total {total:.2f} ms ", va="center", ha="right", color="#ffffff",
-                    fontsize=9, fontweight="bold")
-        else:
-            ax.text(total, i, f"  {total:.2f} ms", va="center", color=INK2)
-    ax.set_xlim(0, xmax)
-    ax.invert_yaxis()
-    ax.set_xlabel("Mean ms per request (linear, axis clipped at 1 ms)")
-    ax.set_title("Where the time goes (mean per request)", loc="left")
-    ax.legend(ncol=3, fontsize=8, loc="upper center", bbox_to_anchor=(0.5, -0.22))
+    kinds = list(perf["workloads"])
+    limits = {"structured": 1.0, "unstructured": 25.0}
+    fig, axes = plt.subplots(len(kinds), 1, figsize=(9, 2.6 * len(kinds) + 1.2))
+    for ax, kind in zip(np.atleast_1d(axes), kinds):
+        R = perf["workloads"][kind]["regimes"]
+        regs = list(R)
+        left = np.zeros(len(regs))
+        for j, (k, name) in enumerate(stages):
+            vals = np.array([R[g]["stage_ms_mean_per_request"][k] for g in regs])
+            ax.barh(regs, vals, left=left, color=SERIES[j], label=name, edgecolor=SURFACE, linewidth=1.2, height=0.6)
+            left += vals
+        rest = np.array([R[g]["e2e_latency_ms"]["mean"] for g in regs]) - left
+        ax.barh(regs, np.clip(rest, 0, None), left=left, color="#c9c8c2", label="SQLite write + other",
+                edgecolor=SURFACE, linewidth=1.2, height=0.6)
+        xmax = limits.get(kind, float(max(R[g]["e2e_latency_ms"]["mean"] for g in regs)) * 1.15)
+        for i, g in enumerate(regs):
+            total = R[g]["e2e_latency_ms"]["mean"]
+            if total > xmax:
+                ax.text(xmax * 0.985, i, f"clipped: total {total:.2f} ms ", va="center", ha="right",
+                        color="#ffffff", fontsize=8.5, fontweight="bold")
+            else:
+                ax.text(total, i, f"  {total:.2f} ms", va="center", color=INK2, fontsize=9)
+        ax.set_xlim(0, xmax)
+        ax.invert_yaxis()
+        ax.set_title(f"{kind} workload - mean ms per request (linear, clipped at {xmax:g} ms)", loc="left", fontsize=11)
+    np.atleast_1d(axes)[-1].legend(ncol=3, fontsize=8, loc="upper center", bbox_to_anchor=(0.5, -0.18))
     fig.tight_layout()
     fig.savefig(out / "latency_breakdown_r1_r2_r3.png", dpi=160, bbox_inches="tight")
     plt.close(fig)
 
 
 def plot_storage(perf: dict, out: Path) -> None:
-    R = perf["regimes"]
+    R = perf["workloads"]["structured"]["regimes"]
     regs = [g for g in R if g != "R3-async"]
     fig, axes = plt.subplots(1, 2, figsize=(9, 3.8))
     vals = [R[g]["storage"]["bytes_per_event"] for g in regs]
@@ -157,46 +167,64 @@ def plot_external(ext: dict, out: Path) -> None:
     if not ok:
         return
     metrics = [("precision", "Precision"), ("recall_tpr", "Recall"), ("f1", "F1")]
-    fig, ax = plt.subplots(figsize=(9, 4.4))
+    engines = [("deterministic", "Deterministic only", SERIES[0]), ("hybrid", "Hybrid (det + pinned ML)", SERIES[1])]
+    fig, axes = plt.subplots(1, 3, figsize=(13, 4.6), sharey=True)
+    names = [k.replace("_", "\n") + ("\n(contaminated)" if v["contaminated"] else "") for k, v in ok.items()]
     x = np.arange(len(ok))
-    w = 0.26
-    for i, (k, name) in enumerate(metrics):
-        vals = [v[k] for v in ok.values()]
-        b = bar(ax, x + (i - 1) * w, vals, w, SERIES[i], name)
-        if k == "f1":
-            ax.bar_label(b, fmt="%.2f", color=INK2, fontsize=8, padding=2)
-    ax.set_xticks(x, [k.replace("_", "\n") for k in ok], fontsize=8.5)
-    ax.set_ylim(0, 1.08)
-    ax.set_ylabel("score (held-out eval partition)")
-    ax.set_title("Deterministic engine: external validation (no ML)", loc="left", pad=22)
-    ax.legend(ncol=3, loc="lower right", bbox_to_anchor=(1.0, 1.0), fontsize=9)
+    w = 0.38
+    for ax, (mk, mname) in zip(axes, metrics):
+        for i, (ek, ename, color) in enumerate(engines):
+            vals = [v[ek][mk] for v in ok.values()]
+            b = bar(ax, x + (i - 0.5) * w, vals, w, color, ename)
+            if mk == "f1":
+                ax.bar_label(b, fmt="%.2f", color=INK2, fontsize=7.5, padding=2)
+        ax.set_xticks(x, names, fontsize=7.5)
+        ax.set_ylim(0, 1.1)
+        ax.set_title(mname, loc="left", fontsize=11)
+    axes[0].set_ylabel("score (held-out eval partition)")
+    h, l = axes[0].get_legend_handles_labels()
+    fig.legend(h, l, ncol=2, loc="upper right", fontsize=9, frameon=False)
+    fig.suptitle("External validation: deterministic-only vs hybrid", x=0.01, ha="left", fontweight="bold")
     fig.tight_layout()
     fig.savefig(out / "external_dataset_eval.png", dpi=160)
     plt.close(fig)
 
 
 def write_summary(ext: dict, tamper: dict, perf: dict, out: Path, elapsed: float) -> None:
+    thr = ext["protocol"]["ml_thresholds_milli"]
+    mm = ext["protocol"]["ml_model"] or {}
     lines = ["# OmniGuard-MCP - experiment summary", "",
              f"Generated {time.strftime('%Y-%m-%d %H:%M:%S')} on {platform.platform()} / Python {platform.python_version()}, "
-             f"total runtime {elapsed / 60:.1f} min.", "", "## External validation (held-out partition)", "",
-             "| Stream | n | Precision | Recall | F1 | FPR |", "|---|---|---|---|---|---|"]
+             f"total runtime {elapsed / 60:.1f} min.", "",
+             f"Hybrid model: `{mm.get('id', 'n/a')}` (sha256 `{mm.get('sha16', '')}`...), provider **{mm.get('provider', 'n/a')}**, "
+             f"frozen thresholds clean {thr['clean']} / untrusted {thr['tainted_untrusted']} (milli).", "",
+             "## External validation (held-out partition)", "",
+             "| Stream | n | Det. P | Det. R | Det. F1 | Hybrid P | Hybrid R | Hybrid F1 | Hybrid FPR |",
+             "|---|---|---|---|---|---|---|---|---|"]
     for k, v in ext["streams"].items():
-        if v.get("status") == "ok":
-            lines.append(f"| {k} | {v['samples']} | {v['precision']:.3f} | {v['recall_tpr']:.3f} | {v['f1']:.3f} | {v['fpr']:.3f} |")
-        else:
-            lines.append(f"| {k} | - | {v.get('status')} | | | |")
+        if v.get("status") != "ok":
+            lines.append(f"| {k} | - | {v.get('status')} | | | | | | |")
+            continue
+        d, h = v["deterministic"], v["hybrid"]
+        name = k + (" (contaminated)" if v["contaminated"] else "")
+        lines.append(f"| {name} | {v['samples']} | {d['precision']:.3f} | {d['recall_tpr']:.3f} | {d['f1']:.3f} | "
+                     f"{h['precision']:.3f} | {h['recall_tpr']:.3f} | {h['f1']:.3f} | {h['fpr']:.3f} |")
     lines += ["", "## Tamper detection (trials detected)", "", "| Regime | Detected | Rate |", "|---|---|---|"]
     for g in ("R1", "R2", "R3"):
         rr = [r for r in tamper["rows"] if r["regime"] == g]
         d, t = sum(r["detected_trials"] for r in rr), sum(r["trials"] for r in rr)
         lines.append(f"| {g} | {d}/{t} | {100 * d / t:.1f}% |")
-    lines += ["", "## Latency and storage", "", "| Regime | Mean ms | p95 ms | p99 ms | Bytes/event | Gas/event |",
-              "|---|---|---|---|---|---|"]
-    for g, r in perf["regimes"].items():
-        e = r["e2e_latency_ms"]
-        lines.append(f"| {g} | {e['mean']:.3f} | {e['p95']:.3f} | {e['p99']:.3f} | {r['storage']['bytes_per_event']} | "
-                     f"{r['storage']['onchain_gas_per_event']} |")
-    lines += ["", "Details: `external_dataset_eval.md`, `tamper_detection_r1_r2_r3.md`, `performance_storage_r1_r2_r3.md`."]
+    lines += ["", "## Latency (ms) by workload", "",
+              "| Workload | Regime | Routed to ML | Mean | p95 | p99 | Det. engine | ONNX infer | Bytes/event |",
+              "|---|---|---|---|---|---|---|---|---|"]
+    for kind, block in perf["workloads"].items():
+        for g, r in block["regimes"].items():
+            e, st = r["e2e_latency_ms"], r["stage_ms_mean_per_request"]
+            lines.append(f"| {kind} | {g} | {r['routed_to_ml']}/{r['requests']} | {e['mean']:.3f} | {e['p95']:.3f} | "
+                         f"{e['p99']:.3f} | {st['deterministic_engine']:.3f} | {st['ml_onnx_inference']:.3f} | "
+                         f"{r['storage']['bytes_per_event']} |")
+    lines += ["", "Details: `external_dataset_eval.md`, `ml_calibration.json`, `tamper_detection_r1_r2_r3.md`, "
+                  "`performance_storage_r1_r2_r3.md`."]
     (out / "SUMMARY.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

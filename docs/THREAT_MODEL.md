@@ -37,6 +37,8 @@
 | Audit DB | durability | integrity (an insider can edit it) |
 | Chain | ordering and immutability of anchored roots | confidentiality (only roots are published) |
 | Watcher | independent verification | prevention (it detects, it does not block) |
+| ONNX model + tokenizer files | nothing until their SHA-256 matches the pin | anything if a single byte differs |
+| Classifier output | an *additional* DENY signal on routed prose | allowing anything the deterministic rules denied |
 
 ## 2. Adversaries
 
@@ -44,7 +46,8 @@
 2. **Malicious content returned by tools:** indirect prompt injection in web pages or files, secrets in outputs.
 3. **Multi-step exfiltration:** reading something sensitive, then sending it out through a later outbound call.
 4. **Malicious or compromised tool server:** rug-pull or tool-poisoning by changing a tool description or schema after it was approved.
-5. **Insider with write access** to the audit database and the gateway's config, trying to rewrite history. They do *not* hold the chain anchorer's key and cannot modify the watcher's snapshot.
+5. **Insider with write access** to the audit database and the gateway's config, trying to rewrite history. They do *not* hold the chain anchorer's key and cannot modify the watcher's snapshots.
+6. **Model supply-chain / tampering attacker:** swaps or patches the deployed ONNX weights or the tokenizer offline, for example to blind the classifier to chosen phrasings with a backdoor-style vocabulary remap.
 
 ## 3. Security guarantees
 
@@ -60,8 +63,24 @@
 | G8 | (R2/R3) Modifying, deleting, inserting or reordering any audit row is detected. | SHA-256 hash chain over row content | adversary 5 |
 | G9 | (R3) Rolling back anchored batches, or forging records and then recomputing the chain *and* local Merkle roots, is detected. | Merkle roots anchored in a write-once contract; the watcher compares roots rebuilt from records with on-chain roots | adversary 5 |
 | G10 | (R3) A rug-pull that also rewrites the gateway's pins is detected. | watcher re-hashes registry, observed, and live definitions against its own snapshot | adversaries 4 + 5 |
+| G11 | The gateway never runs a model or tokenizer whose bytes differ from the pinned SHA-256 digests. It fails closed and refuses to start. | `ml_classifier.py` reads both files into memory, checks them with `hmac.compare_digest`, then builds the tokenizer and `InferenceSession` from those same verified bytes, so there is no check-then-use gap | adversary 6 |
+| G12 | (R3) Offline model or tokenizer tampering, even when the insider also rewrites the gateway's model manifest, is detected. So is any decision logged by an unpinned model. | watcher re-hashes the deployed files against its own model snapshot; `model_sha16` is in every hybrid audit record and covered by the hash chain | adversaries 5 + 6 |
+| G13 | The ML stage cannot weaken the deterministic one. It can only add a DENY to a payload the rules already allowed, and it never sees structured arguments or structured outputs. | routing order + `output_type` in the pinned tool manifest | all |
+| G14 | Hybrid decisions are reproducible from the audit log. The classifier output is quantized to an integer `ml_score_milli` (0–1000) *before* it is compared with an integer threshold. The logged value is exactly the value the decision used. | `quantize_milli` + integer thresholds | all |
 
 ## 4. Limitations (stated explicitly)
+
+### Hybrid ML stage
+
+* **The classifier narrows the semantic gap; it does not close it.** On held-out `deepset/prompt-injections` rows, the hybrid engine catches more paraphrased injections than signatures alone, but recall is still well below 1 (`results/external_dataset_eval.md`). The model is an English-prose classifier, and German or other non-English injections are frequently missed.
+* **Training-data contamination.** `jackhhao/jailbreak-classification` is in the model's published training set. Hybrid numbers on that stream are reported but flagged and must not be read as generalisation. The model card also lists eight unnamed MIT-licensed training sets, so overlap with other public corpora cannot be fully excluded.
+* **Small calibration set.** Thresholds were chosen on 125 dev rows (86 routed). The precision target (0.99 clean / 0.95 untrusted) is met on dev, but the confidence interval is wide. The held-out FPR is the number to trust.
+* **Routing is an attack surface.** Only prose is scored. Config-shaped text (≥ 80% `key=value` / comment lines), structured tool outputs, and payloads ≤ 40 characters skip the model. An attacker can format an injection as config lines to stay on the deterministic path, where only signatures and DLP apply. This trade-off is deliberate: the model fires at 990–1000 on ordinary `.env` and key files.
+* **Adversarial ML.** A fixed public model can be probed offline for evasive phrasings. Integrity pinning prevents *changing* the model; it does not make the model robust.
+* **Numerical determinism across providers.** CUDA and CPU kernels can differ in the last float bits. Quantizing to milli-units makes a decision flip possible only for scores within ±0.0005 of a threshold, and the provider is logged per record.
+* **Upstream status.** The model's repository is archived by its authors. Pinning to a fixed revision and digest means updates are a deliberate re-pin and re-calibration, never silent.
+
+### Deterministic stage and audit
 
 * **Semantic prompt injection is not solved.** Canonicalization, structural parsers and taint tracking close the encoding, injection and multi-step exfiltration vectors listed above. Deterministic signatures still **cannot reliably detect novel or paraphrased indirect prompt injection**. External validation measures this directly: on held-out `deepset/prompt-injections` and `jackhhao/jailbreak-classification` samples the engine has high precision but recall well below 1 (see `results/external_dataset_eval.md`, which lists real false negatives). OmniGuard does **not** claim comprehensive semantic threat detection. Its defense for that class is containment: taint-based egress blocking (G5) and ABAC (G2) limit what a successfully injected agent can *do*.
 * **Detection, not prevention, for audit tampering.** The watcher raises `TamperAlert`s; it cannot undo a modification or stop an insider. Response is out of scope.
@@ -78,7 +97,9 @@
 | Threat | Residual risk | Why |
 |---|---|---|
 | Encoded or structural injection | Low | parser-based plus canonicalization (G3, G4) |
-| Novel semantic or indirect prompt injection | **Medium-High** | signatures only. Mitigated by containment (G2, G5), not detection |
+| Novel semantic or indirect prompt injection | **Medium** (hybrid) / Medium-High (deterministic-only) | pinned classifier on prose plus signatures; recall still well below 1, so containment (G2, G5) remains the backstop |
+| Model or tokenizer tampering | Low | G11 (load-time, fail closed), G12 (out-of-band watcher) |
+| Injection formatted to dodge ML routing | Medium | config-shaped / short / structured payloads get signatures + DLP only |
 | Multi-step exfiltration via outbound tools | Low | monotone taint (G5) |
 | Exfiltration via non-outbound side channels (e.g. encoding data into a file name) | Medium | only declared `outbound_egress` tools are taint-gated |
 | Tool rug-pull | Low | G1, G10 |

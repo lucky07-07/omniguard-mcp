@@ -1,21 +1,94 @@
 {
-  "model_id": "protectai/deberta-v3-base-prompt-injection-v2",
-  "revision": "90c9989b1a342275dd0d1a95aad283c04e075671",
-  "license": "apache-2.0",
-  "local_dir": "models/deberta-v3-base-prompt-injection-v2",
-  "files": {
-    "model.onnx": {
-      "sha256": "f0ea7f239f765aedbde7c9e163a7cb38a79c5b8853d3f76db5152172047b228c",
-      "bytes": 738563188
+  "default": "horizon-guard-base",
+  "models": {
+    "horizon-guard-base": {
+      "model_id": "Horizon-Labs/prompt-injection-guard-base",
+      "revision": "fc071c5754f8cf2edce9dc1d7fd3513ef9287007",
+      "license": "apache-2.0",
+      "local_dir": "models/horizon-guard-base",
+      "files": {
+        "model.onnx": {
+          "sha256": "5ae9f527897b1ffcb2b13440875769d0c28a25fb976b8b42465f0ad5b462b61b",
+          "bytes": 1230730152
+        },
+        "tokenizer.json": {
+          "sha256": "47834a7dbbb0c4324fe9569fe47955241594a9ee539c9e478755d6fbc51e5f46",
+          "bytes": 34387555
+        }
+      },
+      "labels": {
+        "0": "SAFE",
+        "1": "INJECTION"
+      },
+      "positive_label": "INJECTION",
+      "window": {
+        "max_length": 1024,
+        "stride": 768,
+        "max_windows": 4
+      },
+      "training_overlap": [
+        "deepset/prompt-injections:train",
+        "jackhhao/jailbreak-classification:train"
+      ]
     },
-    "tokenizer.json": {
-      "sha256": "752fe5f0d5678ad563e1bd2ecc1ddf7a3ba7e2024d0ac1dba1a72975e26dff2f",
-      "bytes": 8648886
+    "horizon-guard-small": {
+      "model_id": "Horizon-Labs/prompt-injection-guard-small",
+      "revision": "2efc2ed5abecd21eb45c2506d231a65d6e392b85",
+      "license": "apache-2.0",
+      "local_dir": "models/horizon-guard-small",
+      "files": {
+        "model.onnx": {
+          "sha256": "e7aacffc0fe5b5a9362b2faea2c2aa7067d55ce88fb64b54a4dc2ec39e4523e7",
+          "bytes": 563101474
+        },
+        "tokenizer.json": {
+          "sha256": "47834a7dbbb0c4324fe9569fe47955241594a9ee539c9e478755d6fbc51e5f46",
+          "bytes": 34387555
+        }
+      },
+      "labels": {
+        "0": "SAFE",
+        "1": "INJECTION"
+      },
+      "positive_label": "INJECTION",
+      "window": {
+        "max_length": 1024,
+        "stride": 768,
+        "max_windows": 4
+      },
+      "training_overlap": [
+        "deepset/prompt-injections:train",
+        "jackhhao/jailbreak-classification:train"
+      ]
+    },
+    "protectai-deberta-v3-base-v2": {
+      "model_id": "protectai/deberta-v3-base-prompt-injection-v2",
+      "revision": "90c9989b1a342275dd0d1a95aad283c04e075671",
+      "license": "apache-2.0",
+      "local_dir": "models/deberta-v3-base-prompt-injection-v2",
+      "files": {
+        "model.onnx": {
+          "sha256": "f0ea7f239f765aedbde7c9e163a7cb38a79c5b8853d3f76db5152172047b228c",
+          "bytes": 738563188
+        },
+        "tokenizer.json": {
+          "sha256": "752fe5f0d5678ad563e1bd2ecc1ddf7a3ba7e2024d0ac1dba1a72975e26dff2f",
+          "bytes": 8648886
+        }
+      },
+      "labels": {
+        "0": "SAFE",
+        "1": "INJECTION"
+      },
+      "positive_label": "INJECTION",
+      "window": {
+        "max_length": 512,
+        "stride": 384,
+        "max_windows": 4
+      },
+      "training_overlap": [
+        "jackhhao/jailbreak-classification:all"
+      ]
     }
-  },
-  "labels": {
-    "0": "SAFE",
-    "1": "INJECTION"
-  },
-  "positive_label": "INJECTION"
+  }
 }

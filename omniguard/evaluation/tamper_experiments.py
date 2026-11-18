@@ -91,21 +91,26 @@ def _rebuild_local_merkle(c: sqlite3.Connection) -> None:
             c.execute("UPDATE merkle_proofs SET proof_json=? WHERE seq_num=?", (pj, r["seq_num"]))
 
 
-def tamper_field_modification(db: Path, regime: Regime, rng: random.Random, **_) -> str:
+def _upto(ids: list[int], upto: int | None) -> list[int]:
+    """Optionally restrict targets to records <= `upto` (e.g. the latest on-chain-anchored sequence number)."""
+    return [i for i in ids if upto is None or i <= upto] or ids
+
+
+def tamper_field_modification(db: Path, regime: Regime, rng: random.Random, upto: int | None = None, **_) -> str:
     c = _conn(db)
     t, k = table_for(regime), _key(regime)
-    denied = [r[0] for r in c.execute(f"SELECT {k} FROM {t} WHERE decision='DENY' ORDER BY 1")]
-    target = rng.choice(denied or _ids(c, regime))
+    denied = _upto([r[0] for r in c.execute(f"SELECT {k} FROM {t} WHERE decision='DENY' ORDER BY 1")], upto)
+    target = rng.choice(denied or _upto(_ids(c, regime), upto))
     c.execute(f"UPDATE {t} SET decision='ALLOW', rule_ids='[]', risk_score=0 WHERE {k}=?", (target,))
     c.commit()
     c.close()
     return f"{k}={target}: decision DENY->ALLOW, triggered_rules scrubbed"
 
 
-def tamper_record_deletion(db: Path, regime: Regime, rng: random.Random, **_) -> str:
+def tamper_record_deletion(db: Path, regime: Regime, rng: random.Random, upto: int | None = None, **_) -> str:
     c = _conn(db)
     ids = _ids(c, regime)
-    target = rng.choice(ids[1:-1])
+    target = rng.choice(_upto(ids[1:-1], upto))
     c.execute(f"DELETE FROM {table_for(regime)} WHERE {_key(regime)}=?", (target,))
     c.commit()
     c.close()
@@ -125,12 +130,12 @@ def tamper_tail_truncation(db: Path, regime: Regime, rng: random.Random, batch_s
     return f"rolled back {_key(regime)} > {m} ({batch_size} rows)"
 
 
-def tamper_reorder(db: Path, regime: Regime, rng: random.Random, **_) -> str:
+def tamper_reorder(db: Path, regime: Regime, rng: random.Random, upto: int | None = None, **_) -> str:
     c = _conn(db)
     t, k = table_for(regime), _key(regime)
     ids = _ids(c, regime)
     while True:
-        i, j = sorted(rng.sample(ids, 2))
+        i, j = sorted(rng.sample(_upto(ids, upto), 2))
         a = c.execute(f"SELECT {','.join(EVENT_COLUMNS)} FROM {t} WHERE {k}=?", (i,)).fetchone()
         b = c.execute(f"SELECT {','.join(EVENT_COLUMNS)} FROM {t} WHERE {k}=?", (j,)).fetchone()
         if tuple(a) != tuple(b):
@@ -143,11 +148,11 @@ def tamper_reorder(db: Path, regime: Regime, rng: random.Random, **_) -> str:
     return f"swapped payloads of {k}={i} and {k}={j}"
 
 
-def tamper_root_forgery(db: Path, regime: Regime, rng: random.Random, **_) -> str:
+def tamper_root_forgery(db: Path, regime: Regime, rng: random.Random, upto: int | None = None, **_) -> str:
     c = _conn(db)
     t, k = table_for(regime), _key(regime)
-    denied = [r[0] for r in c.execute(f"SELECT {k} FROM {t} WHERE decision='DENY' ORDER BY 1")]
-    target = rng.choice(denied or _ids(c, regime))
+    denied = _upto([r[0] for r in c.execute(f"SELECT {k} FROM {t} WHERE decision='DENY' ORDER BY 1")], upto)
+    target = rng.choice(denied or _upto(_ids(c, regime), upto))
     c.execute(f"UPDATE {t} SET decision='ALLOW', rule_ids='[]', risk_score=0 WHERE {k}=?", (target,))
     if regime != Regime.R1:
         _rechain(c, regime, target)
@@ -155,7 +160,11 @@ def tamper_root_forgery(db: Path, regime: Regime, rng: random.Random, **_) -> st
         _rebuild_local_merkle(c)
     c.commit()
     c.close()
-    return f"modified {k}={target} and recomputed hash chain + local Merkle roots (chain anchor untouched)"
+    if regime == Regime.R1:
+        return f"modified {k}={target} (R1 has no chain or Merkle roots to recompute)"
+    if regime == Regime.R2:
+        return f"modified {k}={target} and recomputed the hash chain from there to the tip"
+    return f"modified {k}={target}, recomputed the hash chain + local Merkle roots (on-chain anchor untouched)"
 
 
 def _rugpull_files(trial_dir: Path) -> tuple[Path, Path]:
@@ -184,7 +193,24 @@ def tamper_rugpull_insider(db: Path, regime: Regime, rng: random.Random, trial_d
 
 
 def _model_dir() -> Path:
-    return ROOT / load_json(MODEL_MANIFEST_PATH)["local_dir"]
+    from omniguard.security.ml_classifier import load_manifest_entry
+
+    return ROOT / load_manifest_entry()["local_dir"]
+
+
+def swap_vocab_ids(path: Path, a: str, b: str) -> str:
+    """Backdoor-style tokenizer edit that still loads: swap the ids of two vocabulary pieces, so "ignore" is fed
+    to the model as the embedding of "the" (and vice versa). Works for BPE (dict vocab) and Unigram (list vocab)."""
+    tok = json.loads(path.read_text(encoding="utf-8"))
+    vocab = tok["model"]["vocab"]
+    if isinstance(vocab, dict):
+        vocab[a], vocab[b] = vocab[b], vocab[a]
+    else:  # Unigram: list of [piece, score]; the id is the list position
+        ia = next(i for i, v in enumerate(vocab) if v[0] == a)
+        ib = next(i for i, v in enumerate(vocab) if v[0] == b)
+        vocab[ia], vocab[ib] = vocab[ib], vocab[ia]
+    path.write_text(json.dumps(tok, ensure_ascii=False), encoding="utf-8")
+    return f"tokenizer ids of {a!r} and {b!r} swapped"
 
 
 def tamper_model_insider(db: Path, regime: Regime, rng: random.Random, trial_dir: Path, trial_index: int = 0,
@@ -203,11 +229,7 @@ def tamper_model_insider(db: Path, regime: Regime, rng: random.Random, trial_dir
             except OSError:
                 shutil.copyfile(src / name, dst / name)
     if target == "tokenizer.json":
-        raw = (dst / target).read_text(encoding="utf-8")
-        # backdoor-style edit: remap the vocabulary piece for "ignore" so injection phrasing tokenizes differently
-        raw = raw.replace('"\u2581ignore"', '"\u2581ignorx"', 1)
-        (dst / target).write_text(raw, encoding="utf-8")
-        what = "tokenizer vocabulary entry remapped"
+        what = swap_vocab_ids(dst / target, "\u2581ignore", "\u2581the")
     else:
         size = (dst / target).stat().st_size
         off = rng.randrange(size // 2, size - 1)
@@ -217,13 +239,16 @@ def tamper_model_insider(db: Path, regime: Regime, rng: random.Random, trial_dir
             fh.seek(off)
             fh.write(bytes([b[0] ^ 0x01]))
         what = f"1 weight byte flipped at offset {off:,}"
+    from omniguard.security.ml_classifier import load_manifest_entry
+
     manifest = load_json(MODEL_MANIFEST_PATH)
+    entry = manifest["models"][load_manifest_entry(None, manifest)["name"]] if "models" in manifest else manifest
     for name in ("model.onnx", "tokenizer.json"):
         h = hashlib.sha256()
         with open(dst / name, "rb") as fh:
             for chunk in iter(lambda: fh.read(1 << 22), b""):
                 h.update(chunk)
-        manifest["files"][name]["sha256"] = h.hexdigest()
+        entry["files"][name]["sha256"] = h.hexdigest()
     save_json(trial_dir / "gateway_model_manifest.json", manifest)
     return f"{target}: {what}; gateway model manifest rewritten to the new digest"
 

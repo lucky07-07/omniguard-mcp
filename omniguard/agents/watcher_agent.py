@@ -82,6 +82,10 @@ class IntegrityWatcher:
         self.snapshot: dict[str, Any] | None = manifest_snapshot
         if isinstance(model_manifest_snapshot, (str, Path)):
             model_manifest_snapshot = json.loads(Path(model_manifest_snapshot).read_text(encoding="utf-8"))
+        if model_manifest_snapshot is not None:
+            from omniguard.security.ml_classifier import load_manifest_entry
+
+            model_manifest_snapshot = load_manifest_entry(None, model_manifest_snapshot)  # the deployed (default) model
         self.model_snapshot: dict[str, Any] | None = model_manifest_snapshot
         self.model_dir = Path(model_dir) if model_dir else None
 

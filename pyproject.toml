@@ -4,13 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "omniguard-mcp"
-version = "0.1.0"
-description = "Tamper-evident security gateway and deterministic information-flow firewall for MCP-based AI agent systems"
+version = "1.1.0"
+description = "Tamper-evident security gateway and hybrid (deterministic + integrity-pinned ML) information-flow firewall for MCP-based AI agent systems"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-# Deliberately no ML training or inference libraries: the security engine is deterministic.
+# Inference only: fixed, SHA-256-pinned ONNX weights. No training, no generative models, no torch.
 dependencies = [
+    "onnxruntime-gpu[cuda,cudnn]>=1.21",
+    "tokenizers>=0.19",
+    "numpy>=1.26",
     "mcp>=1.0",
     "pydantic>=2.6",
     "pyyaml>=6.0",

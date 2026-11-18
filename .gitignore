@@ -14,9 +14,10 @@ results/runtime/
 *.db-shm
 *.sqlite
 
-# model binaries (fetched by scripts/fetch_model.py; integrity pinned in configs/model_manifest.json)
-models/**/*.onnx
-models/**/*.onnx_data
-models/**/*.bin
-models/**/*.safetensors
-models/**/*.pt
+# model binaries + tokenizer (fetched at a pinned revision by scripts/fetch_model.py;
+# SHA-256 digests pinned in configs/model_manifest.json)
+models/
+*.onnx
+*.onnx_data
+*.safetensors
+*.pt

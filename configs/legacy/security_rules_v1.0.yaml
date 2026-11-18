@@ -1,0 +1,184 @@
+# FROZEN snapshot of the v1.0-deterministic-baseline rules (git tag). Used only for the version comparison.
+# OmniGuard-MCP deterministic security engine configuration.
+# Every rule has a stable ID and a weight. A request is denied when the sum of
+# its distinct triggered rule weights, times the session taint multiplier,
+# reaches `deny_threshold`. Rules with weight >= deny_threshold are "hard"
+# rules: a single hit denies.
+
+version: 1
+
+scoring:
+  deny_threshold: 1.0
+  taint_multipliers:
+    CLEAN: 1.0
+    TAINTED_UNTRUSTED: 1.5   # untrusted content in context -> tighter injection sensitivity
+    TAINTED_SENSITIVE: 1.25
+  # Egress inspection of a tool whose output is untrusted always uses this multiplier.
+  untrusted_output_multiplier: 1.5
+
+canonicalizer:
+  max_depth: 6
+  min_base64_len: 16
+  min_hex_len: 16
+  printable_ratio: 0.9
+
+analyzers:
+  path:
+    workspace_roots: ["/workspace"]
+    sensitive_globs:
+      - "/workspace/secrets/**"
+      - "**/.env"
+      - "**/*.pem"
+      - "**/*.key"
+      - "**/id_rsa*"
+      - "**/credentials*"
+  network:
+    allowed_schemes: ["http", "https"]
+    blocked_hostnames: ["localhost", "metadata", "metadata.google.internal", "instance-data", "metadata.azure.com"]
+    blocked_host_suffixes: [".localhost", ".internal", ".local", ".lan", ".home.arpa"]
+  shell:
+    dangerous_binaries: [rm, curl, wget, nc, ncat, netcat, telnet, bash, sh, zsh, dash, ksh, csh, python, python3,
+                         perl, ruby, php, powershell, pwsh, cmd, chmod, chown, dd, mkfs, sudo, su, scp, ssh,
+                         ftp, tftp, socat, xterm, crontab, nohup, eval, exec, kill, shutdown, reboot]
+  sql:
+    sensitive_table_prefixes: ["hr_", "customers", "users", "secrets", "credentials"]
+
+dlp:
+  prefixed_min_entropy: 3.0
+  generic_min_entropy: 3.5
+  high_entropy_min_length: 32
+  high_entropy_threshold: 4.5
+
+# rule_id -> weight
+rules:
+  # canonicalization
+  OBFUSCATION_MULTILAYER: 0.4
+  OBFUSCATION_BASE64_PAYLOAD: 0.2
+  # filesystem
+  PATH_TRAVERSAL_ESCAPE: 1.0
+  PATH_OUTSIDE_WORKSPACE: 1.0
+  PATH_NULL_BYTE: 1.0
+  PATH_HOME_OR_DRIVE: 1.0
+  # network / SSRF
+  SSRF_UNSAFE_SCHEME: 1.0
+  SSRF_LOOPBACK: 1.0
+  SSRF_PRIVATE_ADDRESS: 1.0
+  SSRF_LINK_LOCAL_METADATA: 1.0
+  SSRF_BLOCKED_HOSTNAME: 1.0
+  SSRF_RESERVED_ADDRESS: 1.0
+  SSRF_NONSTANDARD_IP_ENCODING: 0.6
+  SSRF_MALFORMED_URL: 0.6
+  # shell
+  SHELL_COMMAND_CHAINING: 1.0
+  SHELL_COMMAND_SUBSTITUTION: 1.0
+  SHELL_REDIRECTION: 0.6
+  SHELL_VARIABLE_EXPANSION: 0.4
+  SHELL_UNBALANCED_QUOTE: 0.4
+  SHELL_DANGEROUS_BINARY: 0.7
+  SHELL_SENSITIVE_FILE: 0.6
+  SHELL_CODE_EXEC_CALL: 1.0
+  SHELL_TEMPLATE_INJECTION: 1.0
+  # sql
+  SQL_STACKED_QUERIES: 1.0
+  SQL_UNION_SELECT: 0.8
+  SQL_TAUTOLOGY: 1.0
+  SQL_BOOLEAN_PROBE: 0.5
+  SQL_COMMENT: 0.5
+  SQL_UNBALANCED_QUOTE: 0.5
+  SQL_TIME_BASED: 1.0
+  SQL_DESTRUCTIVE_STATEMENT: 1.0
+  SQL_WRITE_STATEMENT: 0.6
+  SQL_SYSTEM_CATALOG: 0.6
+  SQL_DANGEROUS_FUNCTION: 1.0
+  SQL_FINGERPRINTING: 0.4
+  SQL_ENCODED_LITERAL: 0.3
+  SQL_CHAR_CONCAT_CHAIN: 0.6
+  # data loss prevention
+  SECRET_AWS_ACCESS_KEY: 1.0
+  SECRET_GITHUB_TOKEN: 1.0
+  SECRET_API_KEY_SK: 1.0
+  SECRET_SLACK_TOKEN: 1.0
+  SECRET_GOOGLE_API_KEY: 1.0
+  SECRET_PRIVATE_KEY_PEM: 1.0
+  SECRET_JWT: 0.8
+  SECRET_GENERIC_ASSIGNMENT: 0.8
+  SECRET_HIGH_ENTROPY_TOKEN: 0.5
+  SECRET_TO_OUTBOUND_TOOL: 1.0
+  # information flow
+  TAINT_SENSITIVE_TO_EGRESS: 1.0
+
+# Compiled threat signatures, applied to every canonical view of every string argument
+# (ingress) and to tool outputs (egress). `flags: cs` makes a pattern case-sensitive.
+signatures:
+  prompt_injection:
+    - id: PI_IGNORE_INSTRUCTIONS
+      weight: 1.0
+      pattern: '\b(ignore|disregard|forget|skip|bypass|override|neglect|leave|remove|drop|abandon|discard|erase|delete|clear|put\s+aside|set\s+aside)\b[^.\n]{0,40}?\b(previous|prior|above|earlier|preceding|all|any|your|the|system|initial|original|those|these)\b[^.\n]{0,30}?\b(instructions?|prompts?|rules|guidelines|directions|directives|context|tasks?|commands?|orders|constraints|information)\b'
+    - id: PI_FORGET_EVERYTHING
+      weight: 0.8
+      pattern: '\b(forget|disregard|ignore)\s+(about\s+)?(everything|all\s+(of\s+)?(that|this|the\s+above|previous)|what\s+(i|you|we)\s+(said|told|wrote))'
+    - id: PI_NEW_INSTRUCTIONS
+      weight: 0.6
+      pattern: '\b(new|updated|real|actual|true|secret|hidden)\s+(instructions?|task|objective|orders|directive)s?\s*(:|-|are|is)'
+    - id: PI_ROLE_OVERRIDE
+      weight: 0.6
+      pattern: '\byou\s+are\s+(now|no\s+longer|not\s+(an?\s+)?(ai|assistant|chatbot|language\s+model)|free\s+(now|from))\b'
+    - id: PI_FROM_NOW_ON
+      weight: 0.5
+      pattern: '\b(from\s+now\s+on|henceforth|starting\s+now|for\s+the\s+rest\s+of\s+this\s+conversation)\b[^.\n]{0,60}?\b(you|act|respond|answer|reply|behave)\b'
+    - id: PI_UNRESTRICTED_ROLEPLAY
+      weight: 1.0
+      pattern: '\b(act|behave|pretend|roleplay|role-play|respond|operate|function)\s+(as|like|to\s+be|you\s+are)\b[^.\n]{0,80}?\b(unrestricted|unfiltered|uncensored|amoral|unethical|evil|without\s+(any\s+)?(restrictions|limits|filters|rules|morals|ethics)|no\s+(restrictions|limits|filters|rules|morals|ethics|boundaries))\b'
+    - id: PI_JAILBREAK_PERSONA
+      weight: 0.8
+      pattern: '\b(do\s+anything\s+now|developer\s+mode|jailbreak(ed|ing)?|jailbroken|god\s+mode|unfiltered\s+mode|evil\s+confidant|anti-?gpt|chaos\s+mode|stay\s+in\s+character)\b'
+    - id: PI_DAN_PERSONA
+      weight: 0.8
+      flags: cs
+      pattern: '\b(DAN|STAN|DUDE|AIM|BetterDAN)\b'
+    - id: PI_NO_RESTRICTIONS
+      weight: 0.6
+      pattern: '\b(without|no|free\s+(of|from)|bypass(ing)?|ignor(e|ing)|break(ing)?|remove|removing)\s+(any\s+|all\s+|the\s+|your\s+)?(ethical\s+|moral\s+|content\s+|safety\s+|openai\s+)?(restrictions|filters|filtering|guidelines|limitations|censorship|policies|polic(y|ies)|safeguards|boundaries)\b'
+    - id: PI_SYSTEM_PROMPT_EXFIL
+      weight: 1.0
+      pattern: '\b(reveal|show|print|output|repeat|display|leak|tell\s+me|give\s+me|what\s+(is|are|was|were))\b[^.\n]{0,40}?\b(system\s+prompt|initial\s+prompt|original\s+prompt|hidden\s+(prompt|instructions)|your\s+(instructions|prompt|rules|guidelines|system\s+message)|prompt\s+above|text\s+above)'
+    - id: PI_CHAT_TEMPLATE_TOKENS
+      weight: 0.8
+      pattern: '(<\|im_start\|>|<\|im_end\|>|\[/?INST\]|<<SYS>>|<\|system\|>|<\|assistant\|>|^\s*#{2,}\s*(system|instruction|new\s+instruction)s?\s*:?)'
+    - id: PI_TOOL_HIJACK
+      weight: 0.5
+      pattern: '\b(call|invoke|use|execute|run|trigger)\s+(the\s+)?[a-z_]+_(tool|file|email|post|command|db)\b|\b(call|invoke|execute)\s+the\s+\w+\s+tool\b'
+    - id: PI_EXFIL_INSTRUCTION
+      weight: 0.6
+      pattern: '\b(send|forward|email|post|upload|exfiltrate|transmit|leak)\b[^.\n]{0,60}?\b(to|at|into)\s+(https?://|[\w.+-]+@[\w-]+\.\w+)'
+    - id: PI_ASSISTANT_DIRECTIVE
+      weight: 0.4
+      pattern: '\b(important|attention|note|instruction|message)\s+(to|for)\s+(the\s+)?(ai|assistant|model|agent|llm|chatbot|gpt)\b|\b(ai|assistant|chatbot|gpt)\s*,\s*(you\s+must|please\s+(ignore|now)|ignore)'
+    - id: PI_MULTILINGUAL_IGNORE
+      weight: 1.0
+      pattern: '\b(ignorier(e|en)?(\s+sie)?|vergiss|vergessen\s+sie|ignora|olvida|ignorez|oubliez|oublie)\b[^.\n]{0,60}?\b(anweisungen|alles|alle|vorherigen?|befehle|aufgaben|zuvor|obigen?|bisherigen?|instrucciones|anteriores|todo|instructions|précédentes|tout)\b'
+    - id: PI_STAY_IN_PERSONA
+      weight: 0.6
+      pattern: '\b(never|don.?t|do\s+not|must\s+not)\s+break\s+character\b|\b(opposite|evil|unhinged|unrestricted|no-?limits?)\s+(mode|day|persona)\b|\btwo\s+(distinct|separate|different)\s+(answers|responses|personas|entities)\b'
+    - id: PI_POLICY_EVASION
+      weight: 0.6
+      pattern: '\b(regardless\s+of|no\s+matter|even\s+if\s+it)\b[^.\n]{0,40}?\b(illegal|unethical|harmful|immoral|offensive|dangerous|inappropriate|polic(y|ies))\b|\b(does\s+not|doesn.?t|never|won.?t)\s+(follow|cite|care\s+about|abide\s+by|adhere\s+to)\b[^.\n]{0,30}?\b(content\s+polic(y|ies)|openai|guidelines|rules|ethics)\b'
+    - id: PI_MULTILINGUAL_ROLE
+      weight: 0.6
+      pattern: '\b(stell\s+dir\s+vor|tu\s+so\s+als|du\s+bist\s+(jetzt|nun|ab\s+sofort))\b[^.\n]{0,40}?\b(böse|boese|uneingeschränkt|ohne\s+(regeln|einschränkungen|grenzen))\b|\b(imagina|finge)\s+que\s+eres\b[^.\n]{0,40}?\b(malvad[oa]|sin\s+restricciones)\b'
+    - id: PI_OUTPUT_OVERRIDE
+      weight: 0.4
+      pattern: '\b(now|instead|just|only)\s+(say|write|output|print|respond\s+with|reply\s+with|answer\s+with)\b|\b(sag|schreib|antworte)e?\s+(nur|jetzt)\b'
+  generic:
+    - id: GEN_SSI_EXEC
+      weight: 1.0
+      pattern: '<!--\s*#\s*(exec|include|echo|config|fsize|flastmod)\b'
+    - id: GEN_SCRIPT_TAG
+      weight: 0.6
+      pattern: '<\s*script\b|javascript\s*:|\bon(error|load)\s*='
+    - id: GEN_SENSITIVE_SYSTEM_FILE
+      weight: 0.7
+      pattern: '/etc/(passwd|shadow|sudoers|group|hosts)\b|/proc/self/(environ|cmdline)|\.ssh/(id_rsa|authorized_keys)|\\windows\\(system32|win\.ini|repair\\sam)|\\config\\sam\b|boot\.ini'
+    - id: GEN_REVERSE_SHELL
+      weight: 1.0
+      pattern: '/dev/(tcp|udp)/|\bnc(at)?\s+(-\w+\s+)*-e\b|\bbash\s+-i\b|\bmkfifo\b'

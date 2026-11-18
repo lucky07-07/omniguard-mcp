@@ -31,7 +31,7 @@ from omniguard.agents.audit_anchor_agent import AuditAnchorAgent
 from omniguard.config import DEFAULT_BATCH_SIZE, PINNED_TOOLS_PATH, save_json
 from omniguard.crypto.blockchain import BlockchainAnchorClient, connect, deploy_audit_anchor, load_abi
 from omniguard.crypto.hashing import canonical_hash
-from omniguard.models import AuditEvent, CallerIdentity, Decision, Regime, TaintLabel, ToolTaintClass
+from omniguard.models import AuditEvent, CallerIdentity, Decision, Regime, TaintLabel
 from omniguard.security.abac import AbacEngine
 from omniguard.security.security_engine import SecurityEngine
 from omniguard.security.taint_tracker import SessionTaintTracker
@@ -302,13 +302,18 @@ def resolve_ml(ml: Any) -> Any:
 
     if ml is None or ml is False:
         return None
+    mlc = security_rules().get("ml", {})
+    name = mlc.get("model")  # None -> manifest default (or $OMNIGUARD_MODEL)
     if ml == "auto":
-        if not security_rules().get("ml", {}).get("enabled", False) or not model_available():
+        if not mlc.get("enabled", False) or not model_available(model_name=name):
             return None
-        return get_classifier()
+        return get_classifier(model_name=name)
     if ml is True:
-        return get_classifier()
+        return get_classifier(model_name=name)
+    if isinstance(ml, str):
+        return get_classifier(model_name=ml)  # explicit manifest entry name
     return ml  # an already-built classifier
+
 
 @dataclass
 class Stack:

@@ -104,6 +104,7 @@ class SecurityVerdict(BaseModel):
     inspection_path: Literal["deterministic", "hybrid_ml"] = "deterministic"
     ml_score_milli: int | None = None
     ml_threshold_milli: int | None = None
+    ml_tier: str | None = None  # clean | elevated:untrusted | elevated:rule_hit
     ml_provider: str | None = None
     model_sha16: str | None = None
 

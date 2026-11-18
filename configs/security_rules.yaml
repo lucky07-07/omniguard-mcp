@@ -143,9 +143,14 @@ signatures:
     - id: PI_SYSTEM_PROMPT_EXFIL
       weight: 1.0
       pattern: '\b(reveal|show|print|output|repeat|display|leak|tell\s+me|give\s+me|what\s+(is|are|was|were))\b[^.\n]{0,40}?\b(system\s+prompt|initial\s+prompt|original\s+prompt|hidden\s+(prompt|instructions)|your\s+(instructions|prompt|rules|guidelines|system\s+message)|prompt\s+above|text\s+above)'
+    # v1.2: chat-template delimiter escapes are a hard (single-hit) rule; data never needs them
     - id: PI_CHAT_TEMPLATE_TOKENS
+      weight: 1.0
+      flags: cs
+      pattern: '<\|(im_start|im_end|im_sep|endoftext|eot_id|start_header_id|end_header_id|begin_of_text|system|user|assistant)\|>|\[/?INST\]|<</?SYS>>|<start_of_turn>|<end_of_turn>|\[/?SYSTEM_PROMPT\]'
+    - id: PI_FAKE_ROLE_HEADER
       weight: 0.8
-      pattern: '(<\|im_start\|>|<\|im_end\|>|\[/?INST\]|<<SYS>>|<\|system\|>|<\|assistant\|>|^\s*#{2,}\s*(system|instruction|new\s+instruction)s?\s*:?)'
+      pattern: '^\s*#{2,}\s*(system|instruction|new\s+instruction)s?\s*:?|^\s*(system|assistant)\s*:\s*(you\s+(are|must|will)|ignore|new\s+instructions?)'
     - id: PI_TOOL_HIJACK
       weight: 0.5
       pattern: '\b(call|invoke|use|execute|run|trigger)\s+(the\s+)?[a-z_]+_(tool|file|email|post|command|db)\b|\b(call|invoke|execute)\s+the\s+\w+\s+tool\b'
@@ -183,17 +188,26 @@ signatures:
     - id: GEN_REVERSE_SHELL
       weight: 1.0
       pattern: '/dev/(tcp|udp)/|\bnc(at)?\s+(-\w+\s+)*-e\b|\bbash\s+-i\b|\bmkfifo\b'
+    # v1.2: hidden HTML / Markdown comments that address an AI *and* carry an instruction
+    # (classic indirect injection in fetched pages and documents). Both conditions must hold inside the comment.
+    - id: GEN_HIDDEN_COMMENT_DIRECTIVE
+      weight: 1.0
+      pattern: '<!--(?:(?!-->)[\s\S]){0,600}?\b(ai|assistant|agent|llm|chatbot|gpt|model|copilot)\b(?:(?!-->)[\s\S]){0,600}?\b(ignore|disregard|forget|send|forward|e-?mail|reveal|print|execute|run|call|instead|must|exfiltrate|upload)\b|<!--(?:(?!-->)[\s\S]){0,600}?\b(ignore|disregard|forget|reveal|exfiltrate)\b(?:(?!-->)[\s\S]){0,600}?\b(instructions?|prompt|ai|assistant|agent)\b|^\s*\[(//|comment)\]:\s*(#|<>)\s*\([^)]{0,600}\b(ignore|disregard|assistant|ai|agent|instructions?)\b'
 
 # Hybrid stage: integrity-pinned ONNX prompt-injection classifier (configs/model_manifest.json).
-# Routed ONLY for payloads that passed every deterministic check and contain free text
-# (argument type `text`, or any tool output) longer than `min_text_chars`.
-# Thresholds are integer milli-scores (0..1000) calibrated on the 20% dev partition and frozen
-# (see results/ml_calibration.json); TAINTED_UNTRUSTED sessions and untrusted tool outputs use the
-# lower, more aggressive threshold.
+# Routed ONLY for canonicalized prose that passed every deterministic check (argument type `text`, or a
+# tool output declared `output_type: text`) and is longer than `min_text_chars`.
+# Two-tier cascade (integer milli-scores 0..1000, swept on the contamination-free validation set and frozen,
+# see results/ml_calibration.json):
+#   clean     - CLEAN session and deterministic risk == 0
+#   elevated  - TAINTED_UNTRUSTED session, untrusted tool output, or any weighted deterministic rule fired
 ml:
   enabled: true
+  model: horizon-guard-base
   min_text_chars: 40
   route_arg_types: [text]
+  cascade:
+    elevate_on_rule_hit: true
   thresholds_milli:
-    clean: 896
-    tainted_untrusted: 328
+    clean: 260
+    elevated: 190

@@ -47,7 +47,8 @@ class SecurityEngine:
         self.ml_route_types = set(mlc.get("route_arg_types", ["text"]))
         thr = mlc.get("thresholds_milli", {})
         self.ml_thr_clean = int(thr.get("clean", 500))
-        self.ml_thr_untrusted = int(thr.get("tainted_untrusted", self.ml_thr_clean))
+        self.ml_thr_elevated = int(thr.get("elevated", thr.get("tainted_untrusted", self.ml_thr_clean)))
+        self.elevate_on_rule_hit = bool((mlc.get("cascade") or {}).get("elevate_on_rule_hit", False))
         self.tool_meta = tool_meta or {}
         sc = self.cfg.get("scoring", {})
         self.threshold = float(sc.get("deny_threshold", 1.0))
@@ -67,6 +68,10 @@ class SecurityEngine:
         self.dlp = EntropyDLP(d.get("prefixed_min_entropy", 3.0), d.get("generic_min_entropy", 3.5),
                               d.get("high_entropy_min_length", 32), d.get("high_entropy_threshold", 4.5))
         self.signatures = compile_signatures(self.cfg)
+
+    @property
+    def ml_thr_untrusted(self) -> int:  # v1.1 name, kept for callers/tests
+        return self.ml_thr_elevated
 
     # ------------------------------------------------------------------ helpers
     def _w(self, rule_id: str, default: float = 0.5) -> float:
@@ -269,9 +274,19 @@ class SecurityEngine:
     def ml_routable(self, text: str) -> bool:
         return bool(self.ml_segments(text))
 
+    def ml_tier(self, untrusted: bool, deterministic_risk: float) -> tuple[str, int]:
+        """Two-tier cascade: the elevated (lower) threshold applies to untrusted content and - when
+        `elevate_on_rule_hit` is set - whenever any weighted deterministic rule fired below the deny line."""
+        if untrusted:
+            return "elevated:untrusted", self.ml_thr_elevated
+        if self.elevate_on_rule_hit and deterministic_risk > 0:
+            return "elevated:rule_hit", self.ml_thr_elevated
+        return "clean", self.ml_thr_clean
+
     def _apply_ml(self, verdict: SecurityVerdict, texts: list[str], untrusted: bool) -> None:
         """Score free text with the integrity-pinned ONNX classifier; quantized score vs integer threshold."""
-        thr = self.ml_thr_untrusted if untrusted else self.ml_thr_clean
+        tier, thr = self.ml_tier(untrusted, verdict.risk_score)
+        verdict.ml_tier = tier
         best, tok_ms, inf_ms = 0, 0.0, 0.0
         for t in texts:
             r = self.ml.score(t)
@@ -288,7 +303,7 @@ class SecurityEngine:
         if best >= thr:
             verdict.triggered_rules.append(RuleHit(
                 rule_id="ML_PROMPT_INJECTION", weight=self._w("ML_PROMPT_INJECTION", 1.0), stage="hybrid_ml",
-                detail=f"score {best}/1000 >= threshold {thr} ({'untrusted' if untrusted else 'clean'}, {self.ml.provider})"))
+                detail=f"score {best}/1000 >= threshold {thr} ({tier}, {self.ml.provider})"))
             verdict.decision = Decision.DENY
             verdict.redacted_output = None
             verdict.risk_score = round(max(verdict.risk_score, self.threshold), 4)

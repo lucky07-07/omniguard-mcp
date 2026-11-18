@@ -2,6 +2,24 @@
 
 **A tamper-evident security gateway and hybrid (deterministic + integrity-pinned ML) information-flow firewall for Model Context Protocol (MCP) agent systems.**
 
+![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-174%20passing-2ea44f)
+![ONNX Runtime](https://img.shields.io/badge/ONNX%20Runtime-CUDA-76B900?logo=nvidia&logoColor=white)
+![Solidity](https://img.shields.io/badge/Solidity-0.8.24-363636?logo=solidity)
+![MCP](https://img.shields.io/badge/protocol-MCP-6E56CF)
+![License](https://img.shields.io/badge/license-MIT-blue)
+
+![Deterministic-only vs hybrid detection on held-out data](results/external_dataset_eval.png)
+
+| Key result | Value |
+|---|---|
+| Held-out prompt-injection recall, deterministic → hybrid | 0.20 → **0.40** (ingress), 0.29 → **0.48** (indirect / egress) at precision ≥ 0.988 |
+| SQL / command-injection F1 (deterministic, never routed to ML) | **0.92** / **0.91** |
+| Tamper trials detected, R1 / R2 / R3 (8 scenarios × 5 trials) | 10/40 · 20/40 · **40/40** |
+| Structured fast path (R1, mean / p95) | **0.64 ms / 1.1 ms**, 0 requests routed to ML |
+| Hybrid path on RTX 2060 (ONNX inference per routed request) | ~**14 ms** (CUDA execution provider) |
+| Model integrity | SHA-256-pinned weights + tokenizer, verified in memory before load; offline tampering caught by the watcher |
+
 OmniGuard-MCP sits between an AI agent and the MCP tool servers it calls. It checks every tool definition against a pinned SHA-256 digest. Every `tools/call` passes through attribute-based access control and a five-stage inspection engine, in both directions. Every decision goes into an audit log that can be hash-chained, Merkle-batched and anchored on an EVM chain. An independent watcher process verifies that log, the tool manifest and the deployed ML model from outside the gateway.
 
 **Two engines, one pipeline.**

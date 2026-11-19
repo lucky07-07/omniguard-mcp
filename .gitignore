@@ -24,3 +24,6 @@ models/
 
 # local demo renders (voiceover, screen captures)
 demo_media/
+
+# report build intermediates
+docs/report/_build/

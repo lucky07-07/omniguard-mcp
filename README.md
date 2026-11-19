@@ -12,7 +12,7 @@ A security gateway for Model Context Protocol (MCP) agents. It pairs a determini
 [![Live demo](https://img.shields.io/badge/live%20demo-omniguard--mcp.vercel.app-1d1b18?logo=vercel)](https://omniguard-mcp.vercel.app)
 [![API](https://img.shields.io/badge/API-Render-46e3b7?logo=render&logoColor=white)](https://omniguard-mcp-api.onrender.com/api/health)
 
-**▶ [Try it live](https://omniguard-mcp.vercel.app)** · **🎬 [Watch the 2-minute launch film](https://github.com/lucky07-07/omniguard-mcp/releases/download/v1.2-horizon-guard/omniguard_launch_film.mp4)** · [API health](https://omniguard-mcp-api.onrender.com/api/health)
+**▶ [Try it live](https://omniguard-mcp.vercel.app)** · **🎬 [Watch the 80-second trailer](https://github.com/lucky07-07/omniguard-mcp/releases/download/v1.2-horizon-guard/OmniGuard-MCP_Trailer.mp4)** · [API health](https://omniguard-mcp-api.onrender.com/api/health)
 
 The live API runs on Render's free tier, which sleeps when idle, so the first request can take 30–60 s. The dashboard shows a "Waking server" indicator meanwhile.
 
@@ -152,11 +152,61 @@ The test suite passes in all three modes: GPU, CPU-only, and no model installed.
 .\.venv\Scripts\python -m http.server 5173 --directory frontend
 ```
 
-## Launch film
+## Ablation on 100 real benchmark cases
 
-**[Watch it](https://github.com/lucky07-07/omniguard-mcp/releases/download/v1.2-horizon-guard/omniguard_launch_film.mp4)** (1:57, 1080p). Every UI shot in it is a real screenshot of the deployed dashboard and API, taken during real gateway calls, a real tamper attack and a real watcher sweep. [`film_capture.py`](docs/demo/film_capture.py) drives the live site with Playwright, and [`film_compose.py`](docs/demo/film_compose.py) adds the eased push-ins, captions and the sound bed under the voiceover.
+Every case is a real record from the official [MCPTox](https://github.com/zhiqiangwang4/MCPTox-Benchmark), [AgentDojo](https://github.com/ethz-spylab/agentdojo) and [MSB](https://github.com/dongsenzhang/MSB) repositories. Nothing is synthetic. Upstream IDs, files and commits for each case are in [`benchmarks/raw_benchmark_samples.json`](benchmarks/raw_benchmark_samples.json). The run hit the live Render API; the two hybrid-ML rows are the same cases run locally with the pinned Horizon guard model, which does not fit on Render's free tier.
 
-[`docs/demo/LAUNCH_SCRIPT.md`](docs/demo/LAUNCH_SCRIPT.md) is a 1:57 shot-by-shot storyboard. It has timestamped visuals, kinetic text, voiceover and sound cues, and a fact sheet tracing every number to `results/`. [`docs/demo/make_voiceover.py`](docs/demo/make_voiceover.py) renders the voiceover with Gnani Timbre: the key comes from `GNANI_API_KEY` or `--key-file`, and the audio goes to the git-ignored `demo_media/`.
+- **Mode A** is unprotected: calls go straight to the tools and nothing is logged.
+- **Mode B** keeps ingress validation (ABAC, the engine, taint and DLP) and writes to a mutable database log. It has no schema pinning and no anchoring.
+- **Mode C** is the full OmniGuard system.
+
+| Case set (source, n) | Metric | A | B | **C** |
+|---|---|---|---|---|
+| Benign tasks (AgentDojo, 30) | utility ↑ | 100% | 100% | **100%** |
+| Prompt injection (AgentDojo + MSB, 25) | attack success ↓ | 100% | 100% | **100%** |
+| Tool poisoning / schema drift (MCPTox, 25) | attack success ↓ | 100% | 100% | **0%** |
+| Multi-step attack chains (MSB, 10) | attack success ↓ | 100% | 0% | **0%** |
+| Post-hoc log tampering (replayed MSB sessions, 10) | detected ↑ | 0% | 30% | **100%** |
+| Prompt injection + hybrid ML (local GPU, 25) | attack success ↓ | 100% | 0% | **0%** |
+| Benign tasks + hybrid ML (local GPU, 30) | utility ↑ | 100% | 90% | **90%** |
+| Server latency p50 / p95 (ms) | | 0.07 / 0.10 | 1.21 / 1.80 | **1.73 / 182** |
+
+What this shows:
+
+- **Schema pinning** is the only control that stops MCPTox tool poisoning.
+- **Ingress policy and taint** stop every MSB chain at its final step.
+- **Anchoring** raises tamper detection from 30% to 100%.
+- **Rules alone miss** the AgentDojo and MSB injection templates entirely. The ML stage blocks all of them, but it also blocks 3 of 30 benign tasks.
+- **The C p95** comes from the one call in four that seals a Merkle batch and sends the anchor transaction.
+
+Reproduce:
+
+```powershell
+python benchmarks/build_samples.py --upstream <clones>
+```
+
+```powershell
+python benchmarks/run_ablation.py --api https://omniguard-mcp-api.onrender.com
+```
+
+```powershell
+python benchmarks/make_charts.py
+```
+
+Charts are in `benchmarks/charts/` and dashboard screenshots in `benchmarks/screenshots/`.
+
+## Trailer, report and slides
+
+**[Watch the trailer](https://github.com/lucky07-07/omniguard-mcp/releases/download/v1.2-horizon-guard/OmniGuard-MCP_Trailer.mp4)** (1:21, 1080p60; the same file is at [`docs/OmniGuard-MCP_Trailer.mp4`](docs/OmniGuard-MCP_Trailer.mp4)). [`demo/build_dynamic_trailer.py`](demo/build_dynamic_trailer.py) builds it in four steps:
+
+1. It renders dark HTML/CSS/SVG motion cards frame by frame at 60 fps.
+2. It records the deployed dashboard with Playwright, using a scripted cursor and typing.
+3. It adds per-act Gnani narration.
+4. It cuts everything together with 0.4 s crossfades and masters the audio to −16 LUFS.
+
+The technical report ([`docs/OmniGuard-MCP_Technical_Report.docx`](docs/OmniGuard-MCP_Technical_Report.docx) and its PDF) is built by [`docs/report/build_report.py`](docs/report/build_report.py). The 12-slide deck ([`docs/OmniGuard-MCP_Final_Presentation.pptx`](docs/OmniGuard-MCP_Final_Presentation.pptx)) is built by [`docs/presentation/build_deck.py`](docs/presentation/build_deck.py).
+
+The earlier 1:57 launch film is still reproducible: [`film_capture.py`](docs/demo/film_capture.py) captures the live site and [`film_compose.py`](docs/demo/film_compose.py) composes the film. [`docs/demo/LAUNCH_SCRIPT.md`](docs/demo/LAUNCH_SCRIPT.md) is its shot-by-shot storyboard. It has timestamped visuals, kinetic text, voiceover and sound cues, and a fact sheet tracing every number to `results/`. [`docs/demo/make_voiceover.py`](docs/demo/make_voiceover.py) renders the voiceover with Gnani Timbre: the key comes from `GNANI_API_KEY` or `--key-file`, and the audio goes to the git-ignored `demo_media/`.
 
 ## Run the system yourself
 
@@ -190,7 +240,9 @@ omniguard/
   tools/      sample_mcp_server (all side effects simulated)
   evaluation/ external_dataset_eval, calibrate_ml, tamper_experiments, perf_benchmark, workload
 scripts/      run_all_experiments.py, fetch_model.py
-docs/         THREAT_MODEL.md, demo/ (launch script, voiceover), img/
+benchmarks/   real MCPTox / AgentDojo / MSB samples, 3-way ablation runner, results.json, charts/, screenshots/
+demo/         build_dynamic_trailer.py
+docs/         THREAT_MODEL.md, report/, presentation/, demo/ (launch script, voiceover), img/, trailer, report, deck
 tests/        9 test modules
 render.yaml · requirements-render.txt · vercel.json
 ```

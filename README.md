@@ -9,6 +9,12 @@ A security gateway for Model Context Protocol (MCP) agents. It pairs a determini
 ![Solidity](https://img.shields.io/badge/Solidity-0.8.24-363636?logo=solidity)
 ![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-blue)
+[![Live demo](https://img.shields.io/badge/live%20demo-omniguard--mcp.vercel.app-1d1b18?logo=vercel)](https://omniguard-mcp.vercel.app)
+[![API](https://img.shields.io/badge/API-Render-46e3b7?logo=render&logoColor=white)](https://omniguard-mcp-api.onrender.com/api/health)
+
+**▶ [Try it live](https://omniguard-mcp.vercel.app)** · **🎬 [Watch the 2-minute launch film](https://github.com/lucky07-07/omniguard-mcp/releases/download/v1.2-horizon-guard/omniguard_launch_film.mp4)** · [API health](https://omniguard-mcp-api.onrender.com/api/health)
+
+The live API runs on Render's free tier, which sleeps when idle, so the first request can take 30–60 s. The dashboard shows a "Waking server" indicator meanwhile.
 
 ![OmniGuard-MCP live dashboard](docs/img/dashboard.png)
 
@@ -128,6 +134,8 @@ The test suite passes in all three modes: GPU, CPU-only, and no model installed.
 | `POST /api/ledger/reset` | fresh, anchored baseline |
 | `GET /api/metrics` | benchmark summary from `results/` |
 
+**Live now:** dashboard at [omniguard-mcp.vercel.app](https://omniguard-mcp.vercel.app), API at [omniguard-mcp-api.onrender.com](https://omniguard-mcp-api.onrender.com/api/health).
+
 **Deploy the backend:** in Render, choose *New → Blueprint* and select this repo. [`render.yaml`](render.yaml) installs `requirements-render.txt` (no onnxruntime, torch or datasets) and starts `uvicorn omniguard.api.server:app` with `/api/health` as the health check.
 
 **Deploy the frontend:** import the repo in Vercel. [`vercel.json`](vercel.json) serves `frontend/` as a static site, and `.vercelignore` keeps the backend out of the upload.
@@ -145,6 +153,8 @@ The test suite passes in all three modes: GPU, CPU-only, and no model installed.
 ```
 
 ## Launch film
+
+**[Watch it](https://github.com/lucky07-07/omniguard-mcp/releases/download/v1.2-horizon-guard/omniguard_launch_film.mp4)** (1:57, 1080p). Every UI shot in it is a real screenshot of the deployed dashboard and API, taken during real gateway calls, a real tamper attack and a real watcher sweep. [`film_capture.py`](docs/demo/film_capture.py) drives the live site with Playwright, and [`film_compose.py`](docs/demo/film_compose.py) adds the eased push-ins, captions and the sound bed under the voiceover.
 
 [`docs/demo/LAUNCH_SCRIPT.md`](docs/demo/LAUNCH_SCRIPT.md) is a 1:57 shot-by-shot storyboard. It has timestamped visuals, kinetic text, voiceover and sound cues, and a fact sheet tracing every number to `results/`. [`docs/demo/make_voiceover.py`](docs/demo/make_voiceover.py) renders the voiceover with Gnani Timbre: the key comes from `GNANI_API_KEY` or `--key-file`, and the audio goes to the git-ignored `demo_media/`.
 

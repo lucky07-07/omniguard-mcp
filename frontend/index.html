@@ -631,7 +631,7 @@ function ablation() {
   const cls = (metric, v) => { const good = metric === "asr" ? v === 0 : v === 100; const bad = metric === "asr" ? v >= 50 : v <= 50; return good ? "h-100" : bad ? "h-0" : "h-mid"; };
   const fmt = (v) => (v == null ? "–" : `${Math.round(v * 10) / 10}%`);
   const rows = Object.entries(A.categories).map(([k, c]) => `<tr><td><b>${esc(c.label || k)}</b> <span class="small muted">${esc(c.source)} · n=${c.n} · ${c.metric === "asr" ? "attack success ↓" : c.metric === "utility" ? "utility ↑" : "detected ↑"}</span></td>${
-    ["A", "B", "C"].map((m) => `<td class="cell ${cls(c.metric, c[m])}">${fmt(c[m])}</td>`).join("")}</tr>`).join("");
+    ["A", "B", "C"].map((m) => `<td class="cell num ${cls(c.metric, c[m])}">${fmt(c[m])}</td>`).join("")}</tr>`).join("");
   const L = A.latency_ms || {};
   const lat = ["p50", "p95"].map((q) => `<tr><td><b>server latency ${q}</b> <span class="small muted">ms, measured in the API</span></td>${["A", "B", "C"].map((m) => `<td class="num">${L[m]?.[q] != null ? L[m][q].toFixed(2) : "–"}</td>`).join("")}</tr>`).join("");
   $("#abl").innerHTML = `<thead><tr><th>Case set</th><th class="num">A · none</th><th class="num">B · ingress + mutable log</th><th class="num">C · OmniGuard</th></tr></thead><tbody>${rows}${lat}</tbody>`;

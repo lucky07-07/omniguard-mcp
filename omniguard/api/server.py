@@ -102,6 +102,11 @@ class LiveState:
 
             ml = resolve_ml("auto")
         self.gateway = GatewayAgent(InProcessDownstream(self.server), self.audit, ml=ml)
+        # ablation "Mode B": the same ingress validation (ABAC + engine + taint + DLP) but NO SHA-256 tool pinning and
+        # a plain, mutable database log (R1 schema: no hash chain, no Merkle batches, no on-chain anchor)
+        self.modeb_store = AuditStore(self.dir / "live_modeb_r1.db", Regime.R1)
+        self.modeb_agent = AuditAnchorAgent(self.modeb_store, batch_size=BATCH_SIZE)
+        self.gateway_b = GatewayAgent(InProcessDownstream(self.server), self.modeb_agent, ml=ml, pinning=False)
         # the watcher's own pinned manifest snapshot, taken at deployment time
         self.snapshot_path = self.dir / "watcher_manifest_snapshot.json"
         shutil.copyfile(PINNED_TOOLS_PATH, self.snapshot_path)
@@ -110,7 +115,7 @@ class LiveState:
         self.audit.flush()  # seal + anchor an initial batch
 
     def close(self) -> None:
-        for st in self.stores.values():
+        for st in [*self.stores.values(), self.modeb_store]:
             try:
                 st.close()
             except Exception:
@@ -118,19 +123,25 @@ class LiveState:
 
     # ------------------------------------------------------------------ gateway
     def call(self, role: str, tool: str, args: dict[str, Any], session_id: str,
-             taint_override: str | None = None, simulate_rugpull: bool = False) -> dict[str, Any]:
-        if taint_override:
-            self.gateway.taint.mark(session_id, TaintLabel(taint_override), "taint_override", "set by API caller")
+             taint_override: str | None = None, simulate_rugpull: bool | str = False,
+             mode: str = "C") -> dict[str, Any]:
+        """mode C = full OmniGuard; B = ingress validation without pinning + mutable log; A = unprotected."""
+        gw = self.gateway_b if mode == "B" else self.gateway
+        if taint_override and mode != "A":
+            gw.taint.mark(session_id, TaintLabel(taint_override), "taint_override", "set by API caller")
         saved = self.server.overrides
         if simulate_rugpull:
-            self.server.overrides = T.RUGPULL_OVERRIDE
+            # the server swaps this tool's description mid-session (default text, or a real payload supplied by the
+            # caller, e.g. an MCPTox poisoned description); the schema stays the same, only the metadata changes
+            text = simulate_rugpull if isinstance(simulate_rugpull, str) else T.RUGPULL_OVERRIDE[T.RUGPULL_TOOL]["description"]
+            self.server.overrides = {**saved, tool: {"description": text}}
         try:
-            resp = self.gateway.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                                        "params": {"name": tool, "arguments": args}},
-                                       token=f"dev-token-{role}", session_id=session_id)
+            if mode == "A":  # unprotected baseline: the agent's call goes straight to the tool server, nothing logged
+                return {"jsonrpc": "2.0", "id": 1, "result": self.server.call_tool(tool, args), "_unprotected": True}
+            return gw.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": tool, "arguments": args}},
+                             token=f"dev-token-{role}", session_id=session_id)
         finally:
             self.server.overrides = saved
-        return resp
 
     def entry_hashes(self, seq: int) -> dict[str, Any]:
         out: dict[str, Any] = {}
@@ -232,7 +243,9 @@ class CallBody(BaseModel):
     arguments: dict[str, Any] = Field(default_factory=dict)
     session_id: str = Field("demo", max_length=64)
     taint_override: Literal["TAINTED_UNTRUSTED", "TAINTED_SENSITIVE"] | None = None
-    simulate_rugpull: bool = False
+    # true = default poisoned description; a string = that exact description (e.g. a real MCPTox payload)
+    simulate_rugpull: bool | str = Field(False, description="swap the tool description mid-session")
+    mode: Literal["A", "B", "C"] = "C"  # ablation: A unprotected, B ingress + mutable log, C full OmniGuard
 
 
 def _stage_trace(trace: dict[str, Any], timings: dict[str, Any]) -> list[dict[str, Any]]:
@@ -272,18 +285,34 @@ def health() -> dict[str, Any]:
 def gateway_call(body: CallBody) -> dict[str, Any]:
     import json as _json
 
-    if len(_json.dumps(body.arguments)) > MAX_ARG_BYTES:
+    if len(_json.dumps(body.arguments)) > MAX_ARG_BYTES or len(str(body.simulate_rugpull)) > 8000:
         raise HTTPException(413, "arguments too large for the demo")
     s = state()
     with LOCK:
-        resp = s.call(body.role, body.tool, body.arguments, body.session_id, body.taint_override, body.simulate_rugpull)
+        t0 = time.perf_counter()
+        resp = s.call(body.role, body.tool, body.arguments, body.session_id, body.taint_override,
+                      body.simulate_rugpull, body.mode)
+        server_ms = (time.perf_counter() - t0) * 1000
+        if body.mode == "A":
+            return {"mode": "A", "decision": "EXECUTED", "denied_at": None, "triggered_rules": [], "server_ms": round(server_ms, 3),
+                    "request": {"name": body.tool, "arguments": body.arguments},
+                    "response": {k: v for k, v in resp.items() if k != "jsonrpc"}, "audit": None,
+                    "note": "unprotected baseline: no inspection, no pinning, no log"}
+        gw = s.gateway_b if body.mode == "B" else s.gateway
         trace = (resp.get("result") or {}).get("_meta", {}).get("omniguard") or (resp.get("error") or {}).get("data") or {}
-        timings = dict(s.gateway.last_timings)
+        timings = dict(gw.last_timings)
         seq = trace.get("audit_seq")
-        hashes = s.entry_hashes(seq) if seq else {}
-        row = s.stores[Regime.R3].get_row(seq) if seq else None
+        if body.mode == "B":
+            hashes, row = {"B_mutable_log": {"id": seq, "entry_hash": None}}, s.modeb_store.get_row(seq) if seq else None
+        else:
+            hashes = s.entry_hashes(seq) if seq else {}
+            row = s.stores[Regime.R3].get_row(seq) if seq else None
     details = _json.loads(row["details"]) if row is not None else {}
     return {
+        "mode": body.mode,
+        "server_ms": round(server_ms, 3),
+        "tool_schema_sha256": trace.get("tool_schema_sha256"),
+        "schema_drift": trace.get("schema_drift"),
         "request": {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": body.tool, "arguments": body.arguments}},
         "response": {k: v for k, v in resp.items() if k != "jsonrpc"},
         "decision": trace.get("decision"),
@@ -316,13 +345,23 @@ ATTACKS = {
 
 
 @app.post("/api/tamper/{attack_type}")
-def tamper(attack_type: str) -> dict[str, Any]:
+def tamper(attack_type: str, mode: Literal["B", "C"] = "C") -> dict[str, Any]:
     if attack_type not in ATTACKS:
         raise HTTPException(404, f"unknown attack; choose one of {sorted(ATTACKS)}")
     s = state()
     desc, fn = ATTACKS[attack_type]
     applied: dict[str, str] = {}
     with LOCK:
+        if mode == "B":  # the ablation's plain mutable log
+            if fn is None:
+                raise HTTPException(400, "tool_rugpull is a manifest attack; Mode B has no pins to rewrite")
+            s.modeb_store.conn.commit()
+            try:
+                applied["B"] = fn(s.modeb_store.path, Regime.R1, random.Random(f"{attack_type}-{time.time_ns()}"),
+                                  batch_size=BATCH_SIZE, trial_dir=s.dir)
+            except (IndexError, ValueError) as exc:
+                applied["B"] = f"not applicable yet ({exc})"
+            return {"attack": attack_type, "mode": "B", "description": desc, "applied": applied}
         if fn is None:
             s.server.overrides = T.RUGPULL_OVERRIDE
             mutated = next(t for t in s.server.list_tools() if t["name"] == T.RUGPULL_TOOL)
@@ -349,7 +388,13 @@ def tamper(attack_type: str) -> dict[str, Any]:
 
 
 @app.post("/api/watcher/verify")
-def watcher_verify() -> dict[str, Any]:
+def watcher_verify(mode: Literal["B", "C"] = "C") -> dict[str, Any]:
+    if mode == "B":  # the best a mutable log can do: the R1-style id-continuity sweep
+        with LOCK:
+            s = state()
+            s.modeb_store.conn.commit()
+            rep = IntegrityWatcher(s.modeb_store.path, Regime.R1).sweep().to_dict()
+        return {"mode": "B", "regimes": {"B": rep}, "summary": {"B": "clean" if rep["ok"] else f"{len(rep['alerts'])} TamperAlert(s)"}}
     with LOCK:
         res = state().verify()
     return {"regimes": res, "summary": {r: ("clean" if v["ok"] else f"{len(v['alerts'])} TamperAlert(s)")
@@ -368,6 +413,12 @@ def ledger_reset() -> dict[str, Any]:
 
 @app.get("/api/metrics")
 def metrics() -> dict[str, Any]:
+    return build_metrics()
+
+
+@app.get("/api/benchmarks")
+def benchmarks() -> dict[str, Any]:
+    """Held-out detection metrics (0.30 to 0.84 F1) plus the 3-way ablation on real MCPTox / AgentDojo / MSB cases."""
     return build_metrics()
 
 

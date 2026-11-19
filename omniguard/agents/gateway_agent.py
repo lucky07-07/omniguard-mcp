@@ -104,7 +104,10 @@ class GatewayAgent:
     def __init__(self, downstream: Downstream, audit: AuditAnchorAgent,
                  engine: SecurityEngine | None = None, abac: AbacEngine | None = None,
                  integrity: ToolIntegrityRegistry | None = None, taint: SessionTaintTracker | None = None,
-                 verify_on_call: bool = True, ml: Any | None = None):
+                 verify_on_call: bool = True, ml: Any | None = None, pinning: bool = True):
+        self.pinning = pinning  # False = ablation "Mode B": no SHA-256 tool pinning (manifest or session)
+        # session-level tool-schema pins: (session_id, tool) -> sha256 of the definition first used in that session
+        self.session_pins: dict[tuple[str, str], str] = {}
         self.downstream = downstream
         self.audit = audit
         self.integrity = integrity or ToolIntegrityRegistry.load()
@@ -197,13 +200,15 @@ class GatewayAgent:
 
         # 2. tool integrity -------------------------------------------------
         t0 = time.perf_counter()
+        #    registration check only: the tool must be served downstream and pinned in the deployment manifest.
+        #    Per-call content drift is checked at the ingress gate (4a) and reported as SCHEMA_DRIFT_RUG_PULL.
         definition = self._current_definition(name)
-        integ = self.integrity.verify(definition) if definition else None
+        manifest_pin = (self.integrity.meta(name) or {}).get("digest") if definition else None
         tm["integrity_ms"] = (time.perf_counter() - t0) * 1000
-        if integ is None or not integ.ok:
-            stage, decision = "integrity", Decision.DENY
-            rules = ["TOOL_UNKNOWN" if integ is None else "TOOL_INTEGRITY_VIOLATION"]
-            details["integrity"] = None if integ is None else {"expected": integ.expected, "actual": integ.actual}
+        if definition is None:
+            stage, decision, rules = "integrity", Decision.DENY, ["TOOL_UNKNOWN"]
+        elif manifest_pin is None and self.pinning:
+            stage, decision, rules = "integrity", Decision.DENY, ["TOOL_NOT_PINNED"]
 
         # 3. ABAC -------------------------------------------------------------
         if decision == Decision.ALLOW:
@@ -215,10 +220,28 @@ class GatewayAgent:
                 stage, decision, rules = "abac", Decision.DENY, ab.reasons
 
         # 4. ingress inspection -----------------------------------------------
+        #    4a. tool-schema pinning (OWASP MCP03): re-hash SHA256(canonical {name, description, inputSchema}) on
+        #        every call and compare it with (i) the deployment manifest pin and (ii) the pin taken on the tool's
+        #        first use in this session. Any mismatch is a rug pull, blocked before anything executes.
+        schema_pin: dict[str, Any] | None = None
+        if decision == Decision.ALLOW and self.pinning and definition is not None:
+            t0 = time.perf_counter()
+            observed = tool_digest(definition)
+            key = (caller.session_id, name)
+            first = key not in self.session_pins
+            session_pin = self.session_pins.setdefault(key, observed if observed == manifest_pin else manifest_pin)
+            schema_pin = {"tool": name, "sha256": session_pin, "observed": observed, "first_use": first}
+            tm["schema_pin_ms"] = (time.perf_counter() - t0) * 1000
+            baseline = "manifest" if observed != manifest_pin else "session" if observed != session_pin else None
+            if baseline:
+                expected = manifest_pin if baseline == "manifest" else session_pin
+                stage, decision, rules = "ingress", Decision.DENY, ["SCHEMA_DRIFT_RUG_PULL"]
+                details["schema_drift"] = {"tool": name, "baseline": baseline, "expected": expected, "observed": observed}
+        #    4b. canonicalize -> structural analyzers (SQL, shell, path, SSRF) -> signatures -> (prose) ML
         if decision == Decision.ALLOW:
             t0 = time.perf_counter()
             ingress = self.engine.inspect_ingress(name, args, taint, tool_class)
-            tm["ingress_ms"] = (time.perf_counter() - t0) * 1000
+            tm["ingress_ms"] = (time.perf_counter() - t0) * 1000 + tm.get("schema_pin_ms", 0.0)
             risk = ingress.risk_score
             if ingress.decision == Decision.DENY:
                 stage, decision, rules = "ingress", Decision.DENY, ingress.rule_ids
@@ -265,6 +288,11 @@ class GatewayAgent:
             "decision": decision.value, "stage": stage or "complete", "risk_score": risk, "triggered_rules": rules,
             "taint_state": self.taint.state_str(caller.session_id), "canonical_input_hash": args_hash,
         }
+        if schema_pin is not None:
+            trace["tool_schema_sha256"] = schema_pin["sha256"]
+            details["schema_pin"] = {"tool": name, "sha256": schema_pin["sha256"], "first_use": schema_pin["first_use"]}
+        if "schema_drift" in details:
+            trace["schema_drift"] = details["schema_drift"]
         ml_v = [v for v in (ingress, egress) if v is not None and v.inspection_path == "hybrid_ml"]
         trace["inspection_path"] = "hybrid_ml" if ml_v else "deterministic"
         trace["ml_score_milli"] = max(v.ml_score_milli for v in ml_v) if ml_v else None

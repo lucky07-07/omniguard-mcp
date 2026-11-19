@@ -8,7 +8,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from omniguard.config import RESULTS_DIR, load_json
+from omniguard.config import RESULTS_DIR, ROOT, load_json
+
+BENCH_DIR = ROOT / "benchmarks"
 
 METRIC_KEYS = ("n", "precision", "recall_tpr", "f1", "fpr", "tp", "fp", "tn", "fn", "routed_to_ml", "contaminated_rows")
 
@@ -31,7 +33,11 @@ def build_metrics(results_dir: Path = RESULTS_DIR) -> dict[str, Any]:
     cal = load("ml_calibration.json") or {}
     tam = load("tamper_detection_r1_r2_r3.json") or {}
     perf = load("performance_storage_r1_r2_r3.json") or {}
+    abl_path = BENCH_DIR / "results.json"
+    abl = load_json(abl_path) if abl_path.exists() else None
     return {
+        "ablation": ({k: abl[k] for k in ("summary", "modes", "categories", "latency_ms", "sources", "run") if k in abl}
+                     if abl else None),
         "engines": ext.get("engines"),
         "protocol": ext.get("protocol"),
         "external": external,

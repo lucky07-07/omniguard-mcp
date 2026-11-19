@@ -4,13 +4,14 @@
     python docs/report/build_report.py     # two passes: build -> PDF via Word -> page numbers -> rebuild
 
 The template's title page, acknowledgement block, page geometry, page borders and Times New Roman styling are kept;
-the placeholder body is replaced. Numbers in Chapter 4 are read from benchmarks/results.json and results/*.json.
+the placeholder body is replaced. Numbers in Chapter 5 are read from benchmarks/results.json and results/*.json.
 """
 
 from __future__ import annotations
 
 import copy
 import json
+import math
 import re
 import shutil
 import subprocess
@@ -19,6 +20,7 @@ from pathlib import Path
 
 import docx
 import openpyxl
+import yaml
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK, WD_TAB_ALIGNMENT, WD_TAB_LEADER
 from docx.oxml import OxmlElement
@@ -43,6 +45,60 @@ GUIDE_DESIG = "Assistant Professor"
 R = json.loads((ROOT / "benchmarks" / "results.json").read_text(encoding="utf-8"))
 TAMPER = json.loads((ROOT / "results" / "tamper_detection_r1_r2_r3.json").read_text(encoding="utf-8"))
 EXT = json.loads((ROOT / "results" / "external_dataset_eval.json").read_text(encoding="utf-8"))
+RULES = yaml.safe_load((ROOT / "configs" / "security_rules.yaml").read_text(encoding="utf-8"))["rules"]
+
+
+# ============================================================================ metrics (same definitions as the deck)
+def metrics(tp, fp, tn, fn):
+    """Binary metrics plus two-class macro / weighted F1 (attack + benign class) and MCC."""
+    n = tp + fp + tn + fn
+    p = tp / (tp + fp) if tp + fp else 0.0
+    r = tp / (tp + fn) if tp + fn else 0.0
+    f1 = 2 * p * r / (p + r) if p + r else 0.0
+    pn = tn / (tn + fn) if tn + fn else 0.0
+    rn = tn / (tn + fp) if tn + fp else 0.0
+    f1n = 2 * pn * rn / (pn + rn) if pn + rn else 0.0
+    pos, neg = tp + fn, tn + fp
+    den = math.sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+    return {"n": n, "acc": (tp + tn) / n, "p": p, "r": r, "f1": f1, "macro": (f1 + f1n) / 2,
+            "weighted": (f1 * pos + f1n * neg) / n, "fpr": fp / neg if neg else 0.0,
+            "mcc": (tp * tn - fp * fn) / den if den else 0.0, "tp": tp, "fp": fp, "tn": tn, "fn": fn}
+
+
+def ext(stream, view, eng):
+    m = EXT["streams"][stream]["views"][view][eng]
+    return metrics(m["tp"], m["fp"], m["tn"], m["fn"])
+
+
+def ablation_metrics(path: Path):
+    """Every non-tamper ablation case as a binary decision: positive = the gateway blocked the call."""
+    rows = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()]
+    out = {}
+    for m in ("A", "B", "C"):
+        tp = fp = tn = fn = 0
+        for r in rows:
+            blocked = not r["modes"][m]["final_forwarded"]
+            if r["category"] == "benign":
+                fp += blocked
+                tn += not blocked
+            else:
+                tp += blocked
+                fn += not blocked
+        out[m] = metrics(tp, fp, tn, fn)
+    return out
+
+
+ABL_LIVE = ablation_metrics(ROOT / "benchmarks" / "results_cases.jsonl")
+ABL_ML = ablation_metrics(ROOT / "benchmarks" / "results_local_hybrid_ml_cases.jsonl")
+pc = lambda v: f"{100 * v:.1f}%"  # noqa: E731
+f3 = lambda v: f"{v:.3f}"  # noqa: E731
+SETS = [("deepset prompt-injection (tool inputs)", "prompt_injection_ingress", "clean"),
+        ("deepset prompt-injection (tool outputs)", "prompt_injection_egress", "clean"),
+        ("jackhhao jailbreak", "jailbreak_ingress", "clean"),
+        ("zrmarine SQL injection", "sql_injection", "full"),
+        ("CommandInjection", "command_injection", "full")]
+ENGINES = [("v1.0", "Rules only (signature baseline)"), ("v1.1", "ProtectAI DeBERTa-v3 v2 †"),
+           ("v1.2-small", "Horizon guard-small"), ("v1.2", "**Ours: rules + Horizon guard-base cascade**")]
 
 
 # ============================================================================ low-level helpers
@@ -165,6 +221,7 @@ def table(d, header, rows, widths, size=10, align=None):
             p.paragraph_format.line_spacing = 1.0
             p.alignment = (WD_ALIGN_PARAGRAPH.CENTER if (align and align[j] == "c") else WD_ALIGN_PARAGRAPH.LEFT)
             add_rich(p, str(val), size, base_bold=(i == 0))
+            p.paragraph_format.keep_with_next = i < len(rows) and len(rows) <= 22  # keep short tables on one page
             if i == 0:
                 shade(c, "D9E2EC")
     return t
@@ -216,6 +273,13 @@ class Doc:
         para(self.d, cap, 11, "center", True, before=6, after=4, line=1.15, keep=True)
         self.tabs.append(cap)
         return f"Table {self.ch}.{self.tab}"
+
+    def nt(self, k=1):
+        """Label of the k-th table still to come in this chapter."""
+        return f"Table {self.ch}.{self.tab + k}"
+
+    def nf(self, k=1):
+        return f"Figure {self.ch}.{self.fig + k}"
 
     def after_table(self):
         para(self.d, "", after=4, line=1.0)
@@ -379,7 +443,12 @@ def abstract_and_lists(d, doc: Doc, pages: dict, heading):
             f"{lat['C']['p50']:.2f} ms; the p95 of {lat['C']['p95']:.0f} ms comes from calls that seal a batch and send the "
             "anchor transaction. The rule engine alone does not stop AgentDojo-style prompt injections "
             f"({cat['injection']['C']:g}% success); adding the digest-pinned Horizon guard model reduces this to "
-            f"{cat['injection_ml']['C']:g}% at a {100 - cat['benign_ml']['C']:g}% benign false-positive rate.", line=1.5)
+            f"{cat['injection_ml']['C']:g}% at a {100 - cat['benign_ml']['C']:g}% benign false-positive rate. Scored as a "
+            f"classifier on the 90 non-tamper cases, the full system with the guard reaches {pc(ABL_ML['C']['acc'])} accuracy "
+            f"and F1 {f3(ABL_ML['C']['f1'])}. Re-run on the same held-out rows of four public detection datasets, the "
+            f"rules-plus-guard cascade has the best F1 of all approaches compared on prompt injection "
+            f"({f3(ext('prompt_injection_ingress', 'clean', 'v1.2')['f1'])}, against "
+            f"{f3(ext('prompt_injection_ingress', 'clean', 'v1.1')['f1'])} for ProtectAI DeBERTa).", line=1.5)
     para(d, "**Keywords:** Model Context Protocol, agentic AI security, tool poisoning, prompt injection, tamper-evident "
             "logging, Merkle tree, blockchain anchoring, smart contracts.", line=1.5, before=6)
     # TOC
@@ -405,7 +474,6 @@ def abstract_and_lists(d, doc: Doc, pages: dict, heading):
 
 def body(d, doc: Doc, proto):
     s, cat, lat = R["summary"], R["categories"], R["latency_ms"]
-    ext = EXT["streams"]["prompt_injection_ingress"]["views"]["clean"]
     # --------------------------------------------------------------- chapter 1
     doc.chapter("Introduction")
     doc.section("Background")
@@ -451,7 +519,122 @@ def body(d, doc: Doc, proto):
         "A three-way ablation on 100 real cases from MCPTox, AgentDojo and MSB run against the live deployment, with "
         "upstream identifiers kept for every case, and a public live dashboard and API.",
     ])
-    # --------------------------------------------------------------- chapter 2
+    # --------------------------------------------------------------- chapter 2 (plain-language concepts)
+    sect_break(d, proto)
+    doc.chapter("Core Concepts in Simple Terms")
+    para(d, "This chapter explains the four ideas the rest of the report depends on: the overall workflow of a request, "
+            "deterministic rules, smart contracts and Solidity. Each is described in everyday language first, with an "
+            "analogy, and then connected to the exact part of OmniGuard-MCP that uses it. A reader with no security or "
+            "blockchain background should be able to follow the later chapters after reading this one.", indent=0.4)
+    doc.section("Overall Workflow, Step by Step")
+    para(d, "**Analogy.** Think of a bank. A customer (the AI agent) asks to use the vault (a tool such as a file reader "
+            "or a database). Before anyone opens the vault, a security desk checks who the customer is, whether the request "
+            "is allowed, and whether the request slip has been tampered with. Every decision is written in a receipt book, "
+            "and every few receipts a notary stamps a fingerprint of the page so that nobody can rewrite it later. "
+            "OmniGuard-MCP is that security desk, and the blockchain is the notary.", indent=0.4)
+    para(d, f"{doc.nf()} shows the eight steps every tool request goes through. The request moves left to right on the top "
+            "row and right to left on the bottom row. Any of steps 2 to 5 can stop it, and every outcome, allowed or not, "
+            "ends in a receipt.", indent=0.4)
+    doc.figure(HERE / "fig" / "workflow.png", "Overall workflow: the eight steps of one tool request and its four outcomes", 6.0)
+    bullets(d, [
+        "**1 Request in.** The agent sends a `tools/call` message naming a tool and its arguments.",
+        "**2 Who are you?** The bearer token is mapped to an agent and a role (read_only, analyst, operator or admin).",
+        "**3 Genuine tool?** The tool's name, description and input schema are hashed with SHA-256 and compared with the "
+        "pinned fingerprint. A tool that changed after it was trusted is blocked here.",
+        "**4 Allowed?** Attribute-based policies check the role, the tool and its parameters (allowed folders, hosts, "
+        "binaries, tables, row limits) and the session's taint state.",
+        "**5 Inspect.** The deterministic rule engine reads the decoded arguments; free-form prose is also scored by the "
+        "pinned ML guard (Section 2.2).",
+        "**6 Run tool.** Only a request that passed every check is forwarded to the real tool.",
+        "**7 Clean output.** Secrets and personal data in the result are masked as `[REDACTED:…]` and the session is "
+        "marked sensitive, so a later attempt to send data outside is denied at step 4.",
+        "**8 Receipt.** The decision, the rule identifiers and the hashes are written as a hash-chained audit record; "
+        "every four records are sealed and anchored on the blockchain (Section 2.3).",
+    ], 11.5)
+    para(d, f"{doc.nt()} traces two real database queries from the same analyst through these steps. Both pass identity, "
+            "pinning and policy; only the inspection step separates them.", indent=0.4, before=4)
+    doc.tcap("Worked example: one safe request and one SQL injection")
+    table(d, ["Step", "Request A (safe)", "Request B (attack)"], [
+        ["Agent sends", "`SELECT region FROM analytics_sales LIMIT 3`", "`SELECT * FROM analytics_sales WHERE region='x' OR 1=1 LIMIT 5`"],
+        ["2 Who are you?", "analyst ✓", "analyst ✓"],
+        ["3 Genuine tool?", "fingerprint matches ✓", "fingerprint matches ✓"],
+        ["4 Allowed?", "allowed table, has LIMIT ✓", "allowed table, has LIMIT ✓"],
+        ["5 Inspect", "no rule fires ✓", "SQL_TAUTOLOGY: “OR 1=1” is always true ✗"],
+        ["6–7 Run, clean", "runs, nothing to mask", "never runs"],
+        ["8 Receipt", "ALLOW written and hashed", "DENY written and hashed"],
+        ["**Result**", "**ALLOW**: 3 rows returned", "**DENY**: blocked at step 5"],
+    ], [18, 37, 45], 9.5, "lll")
+    doc.after_table()
+    doc.section("Deterministic Rules")
+    para(d, "**What it is.** A deterministic rule is a fixed, written check: the same input always produces the same "
+            "answer. **Analogy:** airport security works from a written list of forbidden items. A knife is stopped at every "
+            "gate, by every officer, every time; nobody guesses and nobody can be talked out of it.", indent=0.4)
+    para(d, f"**How OmniGuard-MCP uses it.** The project has {len(RULES)} named rules in `configs/security_rules.yaml`. "
+            "Each rule has a weight. Before any rule runs, the canonicaliser unwraps URL, Base64, hex and Unicode encodings "
+            "(up to six layers), so an attacker cannot hide “Ignore previous instructions” as `SWdub3Jl…`. The "
+            "engine then adds the weights of every rule that fires and multiplies the sum by the session's taint multiplier "
+            "(1.0 for a clean session, 1.5 after untrusted content, 1.25 after a secret was read). A score of 1.0 or more "
+            f"denies the call. {doc.nf()} shows the flow and three worked examples: a single strong rule blocks on its own, "
+            "two weak rules together reach the threshold, and one weak rule alone is allowed.", indent=0.4)
+    doc.figure(HERE / "fig" / "rules_flow.png", "Decision flow inside the inspection step, with three worked scoring examples", 6.0)
+    para(d, "**Why rules come first.** They take well under a millisecond, they explain themselves (the rule identifier is "
+            "returned to the caller and written to the receipt), and their behaviour can be reviewed line by line. Their "
+            "weakness is paraphrase: an instruction written in new words matches no pattern. That is why prose is also "
+            f"scored by the ML guard, and Chapter 5 reports both. {doc.nt()} groups the rules by what they catch.", indent=0.4)
+    fam = {}
+    for k in RULES:
+        fam[k.split("_")[0]] = fam.get(k.split("_")[0], 0) + 1
+    doc.tcap("Rule families in the deterministic engine")
+    table(d, ["Family", "Rules", "Example rule", "What it catches, in simple words"], [
+        ["SQL", fam.get("SQL", 0), "`SQL_TAUTOLOGY`", "“OR 1=1” tricks that make a query return a whole table"],
+        ["SHELL", fam.get("SHELL", 0), "`SHELL_COMMAND_CHAINING`", "“ls; rm -rf /”: a second, hidden command"],
+        ["PATH", fam.get("PATH", 0), "`PATH_TRAVERSAL_ESCAPE`", "“../../etc/passwd”: escaping the allowed folder"],
+        ["SSRF", fam.get("SSRF", 0), "`SSRF_LINK_LOCAL_METADATA`", "fetching the cloud provider's secret-key address"],
+        ["SECRET", fam.get("SECRET", 0), "`SECRET_AWS_ACCESS_KEY`", "passwords, tokens and API keys inside text"],
+        ["OBFUSCATION", fam.get("OBFUSCATION", 0), "`OBFUSCATION_MULTILAYER`", "messages wrapped in several encodings"],
+        ["TAINT / ML", fam.get("TAINT", 0) + fam.get("ML", 0), "`TAINT_SENSITIVE_TO_EGRESS`", "sending data out after reading secrets; ML guard verdict"],
+        ["**Total**", f"**{len(RULES)}**", "", ""],
+    ], [14, 8, 33, 45], 9.5, "lcll")
+    doc.after_table()
+    doc.section("Smart Contracts")
+    para(d, "**What it is.** A smart contract is a small program stored on a blockchain. Once it is deployed, its code runs "
+            "exactly as written on every node, and nobody, including the person who deployed it, can edit it. "
+            "**Analogy:** a vending machine. Put in the right coin and you get the item; the rules are built into the "
+            "machine, anyone can see them, and no shopkeeper can change the price behind your back.", indent=0.4)
+    para(d, "**Why OmniGuard-MCP needs one.** The audit receipts live in the gateway's own database, which its operator "
+            "could edit. The contract keeps a fingerprint (a Merkle root, 32 bytes) of every batch of receipts somewhere "
+            "the operator cannot rewrite. If anyone later changes, removes or reorders an old receipt, the fingerprint "
+            f"recomputed from the database no longer matches the one on the chain. {doc.nt()} lists what the project's "
+            f"contract, AuditAnchor.sol, contains, and {doc.nf()} shows one batch being sealed and later checked.", indent=0.4)
+    doc.tcap("Contents of the AuditAnchor smart contract")
+    table(d, ["Part", "Name", "What it does"], [
+        ["Stored data", "`anchors[batchId]`", "Merkle root, first and last record number, timestamp and sender of each batch"],
+        ["Stored data", "`batchCount`, `owner`, `isAnchorer`", "number of batches so far, contract owner, approved writers"],
+        ["Write function", "`anchorBatch(batchId, root, startSeq, endSeq)`", "saves one batch fingerprint"],
+        ["Admin function", "`setAnchorer(account, allowed)`", "owner approves or removes a writer"],
+        ["Read functions", "`getAnchor`, `verifyRoot`, `latestAnchoredSeq`", "anyone can read a batch or check a root"],
+        ["Built-in rules", "`require(...)` checks", "batches in order, no sequence gaps, non-empty root, approved sender only"],
+        ["Missing on purpose", "no update or delete", "once a root is stored it can never be changed: write-once"],
+        ["Events", "`BatchAnchored`, `AnchorerSet`", "a public log line for every change"],
+    ], [18, 37, 45], 9.5, "lll")
+    doc.after_table()
+    doc.figure(HERE / "fig" / "contract_flow.png", "Smart contract in action: sealing a batch of four receipts, then catching edits", 6.0)
+    para(d, "Only the 32-byte root and the record range leave the gateway, so no private request data is written to the "
+            "chain, and one transaction covers several calls. Section 4.3 gives the full Merkle and hash-chain design.", indent=0.4)
+    doc.section("Solidity")
+    para(d, "**What it is.** Solidity is the programming language used to write smart contracts for Ethereum-compatible "
+            "blockchains. It looks similar to JavaScript but is statically typed, and it compiles to bytecode for the "
+            "Ethereum Virtual Machine (EVM), which every node runs identically. **Analogy:** Solidity is to the smart "
+            "contract what Python is to the gateway: the language in which its rules are written down.", indent=0.4)
+    para(d, f"**How OmniGuard-MCP uses it.** AuditAnchor.sol is about 110 lines of Solidity (pragma ^0.8.24). Its write-once "
+            "rules are ordinary `require(...)` statements: if a batch arrives out of order or leaves a gap, the transaction "
+            "is rejected and nothing is stored. Solidity 0.8 also checks arithmetic overflow automatically. "
+            f"{doc.nf()} shows a simplified excerpt and the path from source file to the Python code that calls it: the "
+            "`solc` compiler produces bytecode and an ABI (the list of callable functions), the bytecode is deployed to get a "
+            "contract address, and the gateway calls `anchorBatch()` through web3.py. The same file would run unchanged on a "
+            "public test network.", indent=0.4)
+    doc.figure(HERE / "fig" / "solidity.png", "Simplified AuditAnchor.sol and the path from Solidity source to the Python gateway", 6.0)
+    # --------------------------------------------------------------- chapter 4
     sect_break(d, proto)
     doc.chapter("Literature Survey")
     rows, gaps = survey_rows()
@@ -497,7 +680,7 @@ def body(d, doc: Doc, proto):
     table(d, ["Ref", "Work", "Type", "Key finding", "Gap"], trows, [5, 20, 11, 52, 9], 9, "cclcc")
     doc.after_table()
     doc.section("Research Gaps Addressed")
-    para(d, "The survey's gap sheet lists eight gaps. Table 2.2 shows how far this project goes on each; gaps marked "
+    para(d, "The survey's gap sheet lists eight gaps. Table 3.2 shows how far this project goes on each; gaps marked "
             "partial or open are stated as limitations rather than claimed.", indent=0.4)
     doc.tcap("Research gaps and their status in this project")
     status = {"G1": "Built and measured (7 stages, one trace)", "G2": "Open: pins cover the declared interface only",
@@ -507,10 +690,10 @@ def body(d, doc: Doc, proto):
     table(d, ["Gap", "Statement", "Status here"], [[g[0], g[1], status[g[0]]] for g in gaps if g[0] in status],
           [7, 55, 38], 9, "cll")
     doc.after_table()
-    # --------------------------------------------------------------- chapter 3
+    # --------------------------------------------------------------- chapter 4
     sect_break(d, proto)
     doc.chapter("System Architecture")
-    para(d, f"{'Figure 3.1'} shows the system. The agent speaks MCP to the gateway, which exposes the same `tools/list` and "
+    para(d, f"{'Figure 4.1'} shows the system. The agent speaks MCP to the gateway, which exposes the same `tools/list` and "
             "`tools/call` methods and forwards allowed calls to the real tool servers. Every call produces a structured trace "
             "and exactly one audit record, whether it was allowed, redacted or denied.", indent=0.4)
     doc.figure(HERE / "fig" / "architecture.png", "OmniGuard-MCP architecture: seven-stage gateway, audit anchoring and watcher")
@@ -544,7 +727,7 @@ def body(d, doc: Doc, proto):
             "in which `entry_hash = SHA256(seq ‖ prev_hash ‖ canonical_record)`. R3 adds Merkle batches: every "
             "*k* records (k = 4 on the live demo, 16 in the experiments) are hashed into an RFC 6962 tree, and "
             "`anchorBatch(batchId, root, startSeq, endSeq)` stores the root on AuditAnchor.sol, which rejects out-of-order "
-            "batches and sequence gaps and has no update or delete function (Figure 3.2). The IntegrityWatcher runs as a "
+            "batches and sequence gaps and has no update or delete function (Figure 4.2). The IntegrityWatcher runs as a "
             "separate process with a read-only database connection and its own RPC client. It recomputes the chain and every "
             "Merkle root, compares them with the on-chain anchors, checks that every anchored record still exists, and compares "
             "the tool registry with its own manifest snapshot, raising typed alerts such as `HASH_MISMATCH`, "
@@ -567,11 +750,112 @@ def body(d, doc: Doc, proto):
             "YAML; the model manifest pins the ONNX file and tokenizer by SHA-256. A test suite of 204 tests (pytest) covers "
             "the engine, ABAC, pinning and rug pulls, all three audit regimes, every tamper scenario, the watcher and the live "
             "API, and passes with GPU, CPU-only and no model installed.", indent=0.4)
+    # ---- datasets
+    doc.section("External Datasets")
+    st = EXT["streams"]
+    rs = lambda k: st[k]["rows_streamed"]  # noqa: E731
+    para(d, "Only public, real data is used, in two groups. *Detection datasets* ask a narrow question: is this piece of "
+            "text an attack? They test the inspection step on its own. *Agent benchmarks* ask the end-to-end question: does "
+            f"the whole gateway stop the attack while letting normal work through? {doc.nt()} lists every dataset with its "
+            "source, its full size and the number of rows used for testing.", indent=0.4)
+    doc.tcap("External datasets: sources, sizes and rows tested")
+    table(d, ["Dataset", "Source", "Total size", "Rows tested", "What it tests"], [
+        ["deepset/prompt-injections", "Hugging Face", f"{rs('prompt_injection_ingress')['total']:,}", "95 (official test split)", "hidden instructions in text, as tool input and as tool output"],
+        ["jackhhao/jailbreak-classification", "Hugging Face", f"{rs('jailbreak_ingress')['total']:,}", "214 (official test split)", "“pretend you have no rules” jailbreak prompts"],
+        ["zrmarine/sql_injection", "Hugging Face", f"{rs('sql_injection')['total']:,}", "500 (held-out sample)", "SQL injection strings vs normal queries"],
+        ["AmirAliGharesoufloo/CommandInjection", "Hugging Face", f"{rs('command_injection')['total']:,}", "500 (held-out sample)", "shell command injection vs normal commands"],
+        ["MCPTox [5]", "GitHub, AAAI 2026", "485 poisoned tools", "25", "poisoned tool descriptions on real MCP servers"],
+        ["AgentDojo [6]", "GitHub, NeurIPS 2024", "85 user tasks, 27 injection tasks", "30 benign + 13 attacks", "everyday agent tasks and injected goals"],
+        ["MSB [7]", "GitHub, ICLR 2026", "5 attack types × 12 tasks", "12 attacks + 10 chains", "injection templates and multi-step chains"],
+    ], [27, 14, 16, 17, 26], 9, "lllll")
+    doc.after_table()
+    para(d, "**Fair-testing protocol.** For every detection dataset, about 20% of rows (chosen by `sha256(text) mod 5 = 0`) "
+            "formed the development partition, the only data ever used to tune rules or thresholds. The Horizon guard models "
+            "were trained on the deepset and jackhhao *train* splits, so those two datasets are scored only on their official "
+            "*test* splits, which no model or rule saw. SQL and command-injection results use 500 rows sampled from the "
+            "held-out 80%. Cascade thresholds (0.26 and 0.19) were fixed on a separate validation slice before any test row "
+            "was scored. † ProtectAI DeBERTa lists jackhhao among its training data, so its jailbreak score is optimistic.", indent=0.4)
+    # ---- metrics
+    doc.section("Evaluation Metrics")
+    para(d, "**Analogy.** Think of a spam filter. A blocked request that really was an attack is a *true positive* (TP); a "
+            "safe request wrongly blocked is a *false positive* (FP); an attack let through is a *false negative* (FN); a safe "
+            "request allowed is a *true negative* (TN). For security a missed attack (FN) is costly, while a false alarm (FP) "
+            f"annoys users and stops their work, so both are reported. {doc.nt()} gives each metric, the question it answers "
+            "and its formula. Macro-F1 and weighted-F1 treat the problem as two classes (attack and safe) and average their "
+            "per-class F1, equally or by class size.", indent=0.4)
+    doc.tcap("Evaluation metrics in simple words")
+    table(d, ["Metric", "The question it answers", "Formula"], [
+        ["Accuracy", "Out of all requests, how many did we judge correctly?", "(TP + TN) / N"],
+        ["Precision", "When we block something, how often is it really an attack?", "TP / (TP + FP)"],
+        ["Recall", "Out of all real attacks, how many did we catch?", "TP / (TP + FN)"],
+        ["F1-score", "One number balancing precision and recall", "2·P·R / (P + R)"],
+        ["Macro-F1", "Average F1 of the attack and safe classes, each counted equally", "(F1₊ + F1₋) / 2"],
+        ["Weighted-F1", "Same, but each class weighted by how many examples it has", "Σ F1_c · n_c / N"],
+        ["False-positive rate", "How often do we block safe requests?", "FP / (FP + TN)"],
+        ["MCC", "Single quality score from −1 to 1 that stays fair on unbalanced data", "(TP·TN − FP·FN) / √(…)"],
+        ["Attack success rate", "Agent benchmarks: how many attacks reached the tool?", "forwarded / attacks"],
+    ], [19, 56, 25], 9.5, "lll")
+    doc.after_table()
+    # ---- per-dataset results
+    doc.section("Results on Each Dataset")
+    rows, f1s = [], []
+    for name, k, v in SETS:
+        m = ext(k, v, "v1.2")
+        rows.append([name, m["n"], pc(m["acc"]), pc(m["p"]), pc(m["r"]), f3(m["f1"]), f3(m["macro"]), f3(m["weighted"]), pc(m["fpr"]), f3(m["mcc"])])
+    pin, pjb = ext("prompt_injection_ingress", "clean", "v1.2"), ext("jailbreak_ingress", "clean", "v1.2")
+    para(d, f"{doc.nt()} reports every metric for the proposed system (rules plus the pinned Horizon guard cascade) on each "
+            "detection dataset, computed from the saved confusion matrices in results/external_dataset_eval.json. Precision "
+            f"is very high on the prompt-injection data ({pc(pin['p'])} on tool inputs), so the system rarely raises a false "
+            f"alarm; recall ({pc(pin['r'])}) is the weaker side, meaning that roughly one paraphrased injection in four still "
+            "passes. SQL and command injection are handled by the rules alone, because structured arguments are never routed "
+            "to the ML model.", indent=0.4)
+    doc.tcap("Proposed system (v1.2) on each external dataset, held-out rows only")
+    table(d, ["Dataset", "n", "Acc.", "Prec.", "Recall", "F1", "Macro-F1", "W-F1", "FPR", "MCC"], rows,
+          [27, 6, 9, 9, 9, 8, 9, 8, 8, 8], 8.5, "lccccccccc")
+    doc.after_table()
+    # ---- comparison
+    doc.section("Comparison with Existing Approaches")
+    para(d, "Published defences report numbers on their own private benchmarks, which cannot be compared fairly with ours "
+            "(MCP-Guard reports 89.07% F1 [11]; ShieldMCP reduces tool-poisoning success from 74.1% to 8.6% [10]). The "
+            "comparison below therefore re-runs existing, publicly available detectors on *exactly the same rows* under the "
+            "same protocol: a signature-only rule baseline (our v1.0 engine), ProtectAI's DeBERTa-v3 prompt-injection "
+            f"classifier v2, and the smaller Horizon guard model. {doc.nt()} gives accuracy, precision, recall and F1 on the "
+            f"two text datasets; {doc.nt(2)} adds macro-F1, weighted-F1 and MCC for all five, and {doc.nf()} plots F1.", indent=0.4)
+    doc.tcap("Existing approaches vs ours on deepset prompt-injection (n = 95) and jackhhao jailbreak (n = 214)")
+    crow = []
+    for k, name in ENGINES:
+        a, b = ext("prompt_injection_ingress", "clean", k), ext("jailbreak_ingress", "clean", k)
+        cells = [pc(a["acc"]), pc(a["p"]), pc(a["r"]), f3(a["f1"]), pc(b["acc"]), pc(b["p"]), pc(b["r"]), f3(b["f1"])]
+        crow.append([name] + ([f"**{c}**" for c in cells] if k == "v1.2" else cells))
+    table(d, ["Approach", "PI Acc.", "PI Prec.", "PI Rec.", "PI F1", "JB Acc.", "JB Prec.", "JB Rec.", "JB F1"], crow,
+          [28, 9, 9, 9, 8, 9, 9, 9, 8], 8.5, "lcccccccc")
+    doc.after_table()
+    doc.tcap("F1, macro-F1, weighted-F1 and MCC of every approach on every dataset")
+    short = ["PI inputs", "PI outputs", "Jailbreak", "SQL injection", "Cmd injection"]
+    rows = []
+    for (_, k, v), sname in zip(SETS, short):
+        for e, ename in ENGINES:
+            m = ext(k, v, e)
+            nm = ename.replace("**", "").replace("Ours: rules + Horizon guard-base cascade", "Ours (v1.2)")
+            cells = [f3(m["f1"]), f3(m["macro"]), f3(m["weighted"]), f3(m["mcc"])]
+            rows.append([sname if e == "v1.0" else "", f"**{nm}**" if e == "v1.2" else nm] + ([f"**{c}**" for c in cells] if e == "v1.2" else cells))
+    table(d, ["Dataset", "Approach", "F1", "Macro-F1", "W-F1", "MCC"], rows, [17, 39, 11, 11, 11, 11], 8.5, "llcccc")
+    doc.after_table()
+    doc.figure(HERE / "fig" / "f1_compare.png", "F1 of existing approaches and ours on the five external datasets (same rows)", 6.0)
+    b_pi = max(ext("prompt_injection_ingress", "clean", e)["f1"] for e in ("v1.0", "v1.1", "v1.2-small"))
+    para(d, f"The proposed cascade has the best F1 on all three text datasets: on prompt injection it reaches {f3(pin['f1'])} "
+            f"against {f3(b_pi)} for the best existing detector and {f3(ext('prompt_injection_ingress', 'clean', 'v1.0')['f1'])} "
+            "for rules alone, while keeping precision at or near 100%. On SQL and command injection all four approaches tie, "
+            "as expected, because structured arguments are decided by the same rules. The gain comes from combining the two: "
+            "rules provide instant, explainable decisions and a stricter threshold after any rule hit, and the model "
+            "contributes recall on paraphrased prose. † ProtectAI's jailbreak score is optimistic because jackhhao is in its "
+            "training data.", indent=0.4)
+    # ---- agent-benchmark ablation
     doc.section("Benchmark Data and Ablation Design")
     src = R["sources"]
     para(d, "All 100 ablation cases are real records sampled (seed 2026) from the official repositories; nothing is "
             "synthetic. Python task files are parsed statically with `ast` rather than executed, and every case keeps its "
-            "upstream identifier, file, repository URL and commit in benchmarks/raw_benchmark_samples.json (Table 4.1). "
+            f"upstream identifier, file, repository URL and commit in benchmarks/raw_benchmark_samples.json ({doc.nt()}). "
             "AgentDojo injection goals are wrapped in AgentDojo's own *important_instructions* template and MSB attack "
             "implementations in MSB's own templates. MCPTox poisoned descriptions are delivered as a mid-session swap of a tool "
             "the session already used. MSB composite attacks run as three-step sessions: a sensitive read, the injected "
@@ -591,6 +875,7 @@ def body(d, doc: Doc, proto):
             "the full system. An attack counts as successful when the gateway forwards the malicious call; benign utility is "
             "the share of benign calls forwarded; latency is the server-side gateway time of every call in the run.", indent=0.4)
     doc.section("Ablation Results")
+    t_abl = doc.nt()
     doc.tcap(f"Three-way ablation on the live API ({R['run']['finished_at'][:10]}); hybrid rows from the local GPU run")
     order = ["benign", "injection", "poisoning", "chain", "tamper", "benign_ml", "injection_ml"]
     metric = {"utility": "utility ↑", "asr": "attack success ↓", "detection": "detected ↑"}
@@ -601,7 +886,7 @@ def body(d, doc: Doc, proto):
           [30, 6, 18, 14, 16, 16], 9, "lcllll")
     doc.after_table()
     f1 = doc.figure(ROOT / "benchmarks" / "charts" / "ablation_modes.png", "Attack success, benign utility and tamper detection per mode (live API)")
-    para(d, f"Table 4.2 and {f1} separate what each layer buys. Pinning is the only control that stops MCPTox poisoning: "
+    para(d, f"{t_abl} and {f1} separate what each layer buys. Pinning is the only control that stops MCPTox poisoning: "
             f"Mode B forwards {cat['poisoning']['B']:g}% of the swapped tools because the poisoned text is metadata, not an "
             f"argument, while Mode C blocks all {cat['poisoning']['n']} at ingress. Ingress policy alone already stops every MSB "
             "chain at its final step (path jail, binary allow-list and the TAINTED_SENSITIVE egress rule after the secrets read), "
@@ -610,11 +895,31 @@ def body(d, doc: Doc, proto):
             f"{cat['benign']['C']:g}% on the live engine. The weak point is prompt injection: AgentDojo's *important_instructions* "
             "text and MSB's templates contain no phrase the rule engine treats as an attack, so all 25 are forwarded in every "
             "mode. With the digest-pinned Horizon guard model the same cases are all blocked, at the cost of three benign "
-            "AgentDojo tasks (10%) that the model flags (last two rows of Table 4.2).", indent=0.4)
+            f"AgentDojo tasks (10%) that the model flags (last two rows of {t_abl}).", indent=0.4)
+    doc.section("Ablation Scored as Classification")
+    para(d, "The same ablation can be scored with the classification metrics of Section 5.3. The 90 non-tamper cases "
+            "(60 real attacks and 30 real everyday tasks) are treated as one binary test in which a positive means the gateway "
+            f"blocked the request. {doc.nt()} gives the result for each configuration; the tamper checks are reported "
+            "separately in Section 5.9 because they test the log, not a request.", indent=0.4)
+    doc.tcap("Three-way ablation as a binary classification (90 real cases; positive = blocked)")
+    confs = [("A: no protection (live)", ABL_LIVE["A"]), ("B: ingress + mutable log (live)", ABL_LIVE["B"]),
+             ("C: OmniGuard, rules only (live)", ABL_LIVE["C"]), ("B + ML guard (local GPU)", ABL_ML["B"]),
+             ("**C + ML guard (local GPU)**", ABL_ML["C"])]
+    rows = []
+    for name, m in confs:
+        cells = [pc(m["acc"]), pc(m["p"]) if m["tp"] + m["fp"] else "–", pc(m["r"]), f3(m["f1"]), f3(m["macro"]), f3(m["weighted"]), pc(m["fpr"])]
+        rows.append([name] + ([f"**{c}**" for c in cells] if name.startswith("**") else cells))
+    table(d, ["Configuration", "Acc.", "Prec.", "Recall", "F1", "Macro-F1", "W-F1", "FPR"], rows,
+          [33, 9, 9, 9, 8, 11, 10, 9], 8.5, "lccccccc")
+    doc.after_table()
+    c = ABL_ML["C"]
+    para(d, f"Mode A blocks nothing, so its recall is zero. The full system with the ML guard reaches {pc(c['acc'])} accuracy "
+            f"and F1 {f3(c['f1'])}: it blocks all {c['tp']} attacks and wrongly blocks {c['fp']} of the 30 everyday tasks. "
+            f"Comparing B + ML with C + ML isolates schema pinning: the {cat['poisoning']['n']} MCPTox poisoned tools are "
+            "caught only when pinning is on.", indent=0.4)
     doc.section("Tamper Detection Across Regimes")
-    ov = {r["regime"]: r for r in TAMPER.get("overall", [])} if isinstance(TAMPER, dict) else {}
     para(d, "The controlled tamper experiment (96 calls, batch size 16, five randomised trials per scenario and regime, a "
-            "fresh watcher process per sweep) gives the per-regime picture in Table 4.3. R1 sees only deletions that leave an "
+            f"fresh watcher process per sweep) gives the per-regime picture in {doc.nt()}. R1 sees only deletions that leave an "
             "id gap. R2 adds edits and reordering but cannot see a recomputed chain or a truncated tail. R3 detects all 40 trials "
             "with no false alarms on the clean log, because the forged or missing records no longer reproduce the on-chain "
             "roots and range.", indent=0.4)
@@ -630,13 +935,8 @@ def body(d, doc: Doc, proto):
         ["", "**Overall (40 trials)**", "**25%**", "**50%**", "**100%**"],
     ], [7, 63, 10, 10, 10], 9, "clccc")
     doc.after_table()
-    doc.section("Detection Quality and Latency")
-    para(d, f"On the held-out official test split of the prompt-injection stream (n = {ext['v1.2']['n'] if 'n' in ext['v1.2'] else 95}), F1 rises from "
-            f"{ext['v1.0']['f1']:.2f} with rules alone to {ext['v1.2']['f1']:.2f} with the Horizon guard cascade at precision "
-            f"{ext['v1.2']['precision']:.2f} (Figure 4.2); SQL and command injection reach 0.92 and 0.91 F1 on 500 rows each. "
-            "Thresholds were chosen on a separate validation split and frozen before the test split was scored.", indent=0.4)
-    doc.figure(ROOT / "results" / "external_dataset_eval.png", "External held-out detection F1 by engine version (0.30 to 0.84 on prompt injection)", 4.4)
-    para(d, f"{'Figure 4.3'} shows server-side latency on the live API. Inspection costs about one millisecond "
+    doc.section("Latency")
+    para(d, f"{doc.nf()} shows server-side latency on the live API. Inspection costs about one millisecond "
             f"(Mode B p50 {lat['B']['p50']:.2f} ms); the full system's median is {lat['C']['p50']:.2f} ms. Its p95 of "
             f"{lat['C']['p95']:.0f} ms is the one call in four that seals a Merkle batch and waits for the anchor transaction; "
             "the controlled benchmark shows that moving anchoring off the request path (R3-async) brings p95 back to 1.7 ms. "
@@ -644,7 +944,7 @@ def body(d, doc: Doc, proto):
     doc.figure(ROOT / "benchmarks" / "charts" / "latency_p50_p95.png", "Server-side latency per call by mode, live API (log scale)", 4.0)
     doc.section("Live Dashboard")
     sh = ROOT / "benchmarks" / "screenshots"
-    para(d, "Figures 4.4 to 4.7 are captured from the deployed dashboard after real calls to the live API; the SQL "
+    para(d, f"Figures {doc.ch}.{doc.fig + 1} to {doc.ch}.{doc.fig + 4} are captured from the deployed dashboard after real calls to the live API; the SQL "
             "injection scenario is denied at ingress with `SQL_TAUTOLOGY` in the same view.", indent=0.4)
     doc.figure(sh / "03_schema_drift_block.png", "Mid-session rug pull denied as SCHEMA_DRIFT_RUG_PULL with expected and observed hashes", 4.4)
     doc.figure(sh / "05_redact_tainted_trace.png", "Secrets read is redacted; the tainted session's outbound POST is denied by ABAC", 4.4)
@@ -663,17 +963,37 @@ def body(d, doc: Doc, proto):
             "completely, and the ML stage that closes the gap costs a 10% false-positive rate on benign tasks.", indent=0.4)
     doc.section("Limitations")
     bullets(d, [
-        "Pins cover a tool's declared interface, not its implementation; code-level supply-chain changes (gap G2) pass.",
-        "Detector results are non-adaptive; adaptive attacks [14] are expected to lower them.",
-        "The live chain is an in-process EVM; the contract is unchanged on a public L2, but costs there were not measured.",
-        "The demo tools are simulated and records after the last anchored batch are unprotected for one batch.",
-    ])
+        f"**Rules alone miss paraphrased prompt injections.** All {cat['injection']['n']} real AgentDojo and MSB injections "
+        "passed the rule-only engine in every mode.",
+        f"**The ML guard has a cost.** It blocks those injections but also {100 - cat['benign_ml']['C']:g}% of everyday "
+        "AgentDojo tasks, and on the deepset test split about one paraphrased injection in four still passes.",
+        "**Fingerprints cover the declared interface only.** A tool whose code changes while its name, description and "
+        "schema stay the same is not detected (gap G2).",
+        "**Results are non-adaptive.** No attacker in the evaluation knew the defence; adaptive attacks [14] are expected "
+        "to lower detection.",
+        "**The chain is a local test chain.** AuditAnchor runs on an in-process EVM; the contract would run unchanged on a "
+        "public network, but gas cost there was not measured.",
+        "**A short unprotected window.** Records written after the last anchored batch (fewer than four on the live demo) "
+        "are not yet covered by the chain; the demo tools are simulated.",
+    ], 11.5)
+    doc.section("Challenges Faced")
+    bullets(d, [
+        "**Hosting the model.** The free Render tier has no room for the 0.6 GB ONNX guard model, so the live API runs the "
+        "deterministic engine and the hybrid configuration was measured on a local GPU.",
+        "**Mapping benchmarks to MCP calls.** AgentDojo, MSB and MCPTox each describe attacks differently; turning them into "
+        "real tool calls without inventing data required parsing their source files statically and keeping upstream IDs.",
+        "**Keeping test data unseen.** Two public detectors were trained on the same datasets, so official test splits, a "
+        "hash-based development partition and frozen thresholds were needed for a fair comparison.",
+        "**Blockchain latency.** Waiting for the anchor transaction slows one call in four (p95), which pushed the design "
+        "toward an asynchronous anchoring option.",
+    ], 11.5)
     doc.section("Future Scope")
     bullets(d, [
         "Anchor on a public L2 testnet and report gas per batch and cost per 100,000 calls against batch size.",
         "Bind server artifact digests and declared egress allow-lists into the pin to narrow gap G2.",
         "Run an adaptive attack round and over-defence sets, and reduce false positives with per-tool output types.",
-    ])
+        "Make background (asynchronous) anchoring the default and sign each receipt, closing the unanchored window.",
+    ], 11.5)
     # references (own section)
     sect_break(d, proto)
     p = para(d, "REFERENCES", 16, "center", True, after=12)
@@ -757,8 +1077,9 @@ def build(pages: dict, out: Path) -> Doc:
     body(d, real, proto)
     # --- headers / footers per section
     secs = d.sections
-    names = ["", "", "CHAPTER 1 - INTRODUCTION", "CHAPTER 2 - LITERATURE SURVEY", "CHAPTER 3 - SYSTEM ARCHITECTURE",
-             "CHAPTER 4 - IMPLEMENTATION AND RESULTS", "CHAPTER 5 - CONCLUSION AND FUTURE SCOPE", "REFERENCES"]
+    names = ["", "", "CHAPTER 1 - INTRODUCTION", "CHAPTER 2 - CORE CONCEPTS IN SIMPLE TERMS",
+             "CHAPTER 3 - LITERATURE SURVEY", "CHAPTER 4 - SYSTEM ARCHITECTURE", "CHAPTER 5 - IMPLEMENTATION AND RESULTS",
+             "CHAPTER 6 - CONCLUSION AND FUTURE SCOPE", "REFERENCES"]
     set_hf(secs[0], "", "none")
     set_hf(secs[1], "", "roman")
     for i in range(2, len(secs)):
